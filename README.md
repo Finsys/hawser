@@ -88,6 +88,23 @@ curl -fsSL https://raw.githubusercontent.com/Finsys/hawser/main/scripts/install.
 sudo nano /etc/hawser/config
 ```
 
+Example config for **Standard Mode**:
+
+```bash
+# Standard mode - listen for connections
+PORT=2375
+# Optional: require token authentication
+TOKEN=your-secret-token
+```
+
+Example config for **Edge Mode**:
+
+```bash
+# Edge mode - connect to Dockhand server
+DOCKHAND_SERVER_URL=wss://your-dockhand.example.com/api/hawser/connect
+TOKEN=your-agent-token
+```
+
 3. Start the service:
 
 ```bash
