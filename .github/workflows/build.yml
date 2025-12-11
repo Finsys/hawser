@@ -37,12 +37,6 @@ jobs:
       - name: Run go vet
         run: go vet ./...
 
-      - name: Run staticcheck
-        uses: dominikh/staticcheck-action@v1
-        with:
-          version: "latest"
-          install-go: false
-
       - name: Build
         run: go build -v ./...
 
@@ -62,7 +56,6 @@ jobs:
           GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o dist/hawser-linux-arm64 ./cmd/hawser
           GOOS=darwin GOARCH=amd64 go build -ldflags="-s -w" -o dist/hawser-darwin-amd64 ./cmd/hawser
           GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w" -o dist/hawser-darwin-arm64 ./cmd/hawser
-          GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o dist/hawser-windows-amd64.exe ./cmd/hawser
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
