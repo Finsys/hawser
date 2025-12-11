@@ -18,7 +18,29 @@ Hawser is a lightweight Go agent that enables Dockhand to manage Docker hosts in
 
 ## Quick Start
 
-### Docker (Recommended)
+### Binary
+
+Download the latest release from [GitHub Releases](https://github.com/Finsys/hawser/releases).
+
+**Standard Mode:**
+
+```bash
+hawser --port 2375
+```
+
+**Standard Mode with Token Authentication** (optional):
+
+```bash
+TOKEN=your-secret-token hawser --port 2375
+```
+
+**Edge Mode:**
+
+```bash
+hawser --server wss://your-dockhand.example.com/api/hawser/connect --token your-token
+```
+
+### Docker
 
 **Standard Mode** - Agent listens for connections:
 
@@ -27,6 +49,17 @@ docker run -d \
   --name hawser \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -p 2375:2375 \
+  ghcr.io/finsys/hawser:latest
+```
+
+**Standard Mode with Token Authentication** (optional):
+
+```bash
+docker run -d \
+  --name hawser \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -p 2375:2375 \
+  -e TOKEN=your-secret-token \
   ghcr.io/finsys/hawser:latest
 ```
 
@@ -39,22 +72,6 @@ docker run -d \
   -e DOCKHAND_SERVER_URL=wss://your-dockhand.example.com/api/hawser/connect \
   -e TOKEN=your-agent-token \
   ghcr.io/finsys/hawser:latest
-```
-
-### Binary
-
-Download the latest release from [GitHub Releases](https://github.com/Finsys/hawser/releases).
-
-**Standard Mode:**
-
-```bash
-hawser --port 2375
-```
-
-**Edge Mode:**
-
-```bash
-hawser --server wss://your-dockhand.example.com/api/hawser/connect --token your-token
 ```
 
 ### Systemd Service
