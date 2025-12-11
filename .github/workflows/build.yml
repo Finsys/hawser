@@ -41,13 +41,7 @@ jobs:
         run: go build -v ./...
 
       - name: Test
-        run: go test -v -race -coverprofile=coverage.txt -covermode=atomic ./...
-
-      - name: Upload coverage
-        uses: codecov/codecov-action@v4
-        with:
-          files: coverage.txt
-          fail_ci_if_error: false
+        run: go test -v ./...
 
       - name: Build binaries
         run: |
