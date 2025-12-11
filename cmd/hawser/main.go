@@ -23,6 +23,10 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Set version info from ldflags
+	cfg.Version = version
+	cfg.Commit = commit
+
 	// Print startup banner
 	printBanner(cfg)
 

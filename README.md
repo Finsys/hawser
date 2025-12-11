@@ -38,6 +38,18 @@ hawser --port 2376
 TOKEN=your-secret-token hawser --port 2376
 ```
 
+**Standard Mode with TLS** (optional):
+
+```bash
+TLS_CERT=/path/to/server.crt TLS_KEY=/path/to/server.key hawser --port 2376
+```
+
+**Standard Mode with TLS and Token** (recommended for production):
+
+```bash
+TLS_CERT=/path/to/server.crt TLS_KEY=/path/to/server.key TOKEN=your-secret-token hawser --port 2376
+```
+
 **Edge Mode:**
 
 ```bash
@@ -232,6 +244,33 @@ docker run -d \
   ghcr.io/finsys/hawser:latest
 ```
 
+**Standard Mode with TLS** (optional):
+
+```bash
+docker run -d \
+  --name hawser \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v /path/to/certs:/certs:ro \
+  -p 2376:2376 \
+  -e TLS_CERT=/certs/server.crt \
+  -e TLS_KEY=/certs/server.key \
+  ghcr.io/finsys/hawser:latest
+```
+
+**Standard Mode with TLS and Token** (recommended for production):
+
+```bash
+docker run -d \
+  --name hawser \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v /path/to/certs:/certs:ro \
+  -p 2376:2376 \
+  -e TLS_CERT=/certs/server.crt \
+  -e TLS_KEY=/certs/server.key \
+  -e TOKEN=your-secret-token \
+  ghcr.io/finsys/hawser:latest
+```
+
 **Edge Mode** - Agent connects to Dockhand:
 
 ```bash
@@ -268,40 +307,6 @@ Hawser automatically detects the operational mode:
 
 - If `DOCKHAND_SERVER_URL` and `TOKEN` are set → **Edge Mode**
 - Otherwise → **Standard Mode**
-
-### TLS Configuration (Standard Mode)
-
-To enable HTTPS:
-
-```bash
-docker run -d \
-  --name hawser \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -v /path/to/certs:/certs:ro \
-  -p 2376:2376 \
-  -e TLS_CERT=/certs/server.crt \
-  -e TLS_KEY=/certs/server.key \
-  ghcr.io/finsys/hawser:latest
-```
-
-### Token Authentication (Standard Mode)
-
-To require token authentication:
-
-```bash
-docker run -d \
-  --name hawser \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -p 2376:2376 \
-  -e TOKEN=your-secret-token \
-  ghcr.io/finsys/hawser:latest
-```
-
-Clients must include the token in requests:
-
-```bash
-curl -H "X-Hawser-Token: your-secret-token" http://localhost:2376/containers/json
-```
 
 ## Features
 

@@ -110,6 +110,12 @@ func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check if this is an events request - use raw socket for immediate header forwarding
+	if isEventsRequest(r.URL.Path, r.Method) {
+		s.handleEventsStream(w, r)
+		return
+	}
+
 	ctx := r.Context()
 
 	// Build headers for Docker request
@@ -275,6 +281,81 @@ func (s *Server) handleExecHijack(w http.ResponseWriter, r *http.Request) {
 	<-done
 }
 
+// handleEventsStream handles /events requests using raw sockets with proper HTTP parsing
+// Uses http.ReadResponse to correctly handle chunked transfer encoding from Docker
+func (s *Server) handleEventsStream(w http.ResponseWriter, r *http.Request) {
+
+	// Open raw connection to Docker socket
+	dockerConn, err := net.Dial("unix", s.cfg.DockerSocket)
+	if err != nil {
+		http.Error(w, "Failed to connect to Docker: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer dockerConn.Close()
+
+	// Build the HTTP request to Docker
+	dockerReq, err := http.NewRequest(r.Method, "http://localhost"+r.URL.RequestURI(), nil)
+	if err != nil {
+		http.Error(w, "Failed to create request: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	dockerReq.Header.Set("Accept", "application/json")
+
+	// Write the request to the Docker socket
+	if err := dockerReq.Write(dockerConn); err != nil {
+		http.Error(w, "Failed to send request to Docker: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+
+	// Read the response using Go's HTTP parser (handles chunked encoding automatically)
+	reader := bufio.NewReader(dockerConn)
+	resp, err := http.ReadResponse(reader, dockerReq)
+	if err != nil {
+		http.Error(w, "Failed to read Docker response: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	// Copy headers to our response (except Transfer-Encoding which Go handles)
+	for key, values := range resp.Header {
+		if key != "Transfer-Encoding" {
+			for _, value := range values {
+				w.Header().Add(key, value)
+			}
+		}
+	}
+
+	// Set chunked encoding for streaming
+	w.Header().Set("Transfer-Encoding", "chunked")
+
+	// Write status code
+	w.WriteHeader(resp.StatusCode)
+
+	// Get flusher for streaming
+	flusher, ok := w.(http.Flusher)
+	if ok {
+		flusher.Flush() // Flush headers immediately
+	}
+
+	// Stream the body (resp.Body automatically decodes chunked encoding)
+	buf := make([]byte, 4096)
+	for {
+		n, err := resp.Body.Read(buf)
+		if n > 0 {
+			w.Write(buf[:n])
+			if ok {
+				flusher.Flush()
+			}
+		}
+		if err != nil {
+			if err != io.EOF {
+				log.Printf("Events stream error: %v", err)
+			}
+			return
+		}
+	}
+}
+
 // streamResponse handles streaming Docker responses
 func (s *Server) streamResponse(w http.ResponseWriter, body io.Reader) {
 	flusher, ok := w.(http.Flusher)
@@ -320,9 +401,14 @@ func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
 		dockerVersion = version.Version
 	}
 
+	hawserVersion := s.cfg.Version
+	if hawserVersion == "" {
+		hawserVersion = "dev"
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, `{"agentId":"%s","agentName":"%s","dockerVersion":"%s","mode":"standard"}`,
-		s.cfg.AgentID, s.cfg.AgentName, dockerVersion)
+	fmt.Fprintf(w, `{"agentId":"%s","agentName":"%s","dockerVersion":"%s","hawserVersion":"%s","mode":"standard"}`,
+		s.cfg.AgentID, s.cfg.AgentName, dockerVersion, hawserVersion)
 }
 
 // authMiddleware checks for valid token if configured
@@ -364,6 +450,12 @@ func (s *Server) loggingMiddleware(next http.Handler) http.Handler {
 // isExecStartRequest checks if this is an exec/start request that needs hijacking
 func isExecStartRequest(path, method string) bool {
 	return method == "POST" && strings.Contains(path, "/exec/") && strings.Contains(path, "/start")
+}
+
+// isEventsRequest checks if this is a /events request
+func isEventsRequest(path, method string) bool {
+	// Note: r.URL.Path never includes query string, so only HasSuffix is needed
+	return method == "GET" && strings.HasSuffix(path, "/events")
 }
 
 // isStreamingRequest checks if the request expects a streaming response

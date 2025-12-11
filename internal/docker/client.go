@@ -13,18 +13,32 @@ import (
 
 // Client wraps Docker API operations
 type Client struct {
-	socketPath string
-	httpClient *http.Client
-	apiVersion string
+	socketPath   string
+	httpClient   *http.Client
+	streamClient *http.Client // Separate client for streaming (no timeout)
+	apiVersion   string
 }
 
 // NewClient creates a new Docker client
 func NewClient(socketPath string) (*Client, error) {
-	// Create HTTP client with Unix socket transport
+	// Create HTTP transport for Unix socket
 	transport := &http.Transport{
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 			return net.Dial("unix", socketPath)
 		},
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 100,
+		IdleConnTimeout:     90 * time.Second,
+	}
+
+	// Create streaming transport (same settings, reused for all streaming requests)
+	streamTransport := &http.Transport{
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			return net.Dial("unix", socketPath)
+		},
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 100,
+		IdleConnTimeout:     0, // No idle timeout for streaming connections
 	}
 
 	client := &Client{
@@ -32,6 +46,10 @@ func NewClient(socketPath string) (*Client, error) {
 		httpClient: &http.Client{
 			Transport: transport,
 			Timeout:   30 * time.Second,
+		},
+		streamClient: &http.Client{
+			Transport: streamTransport,
+			Timeout:   0, // No timeout for streaming
 		},
 		apiVersion: "v1.43", // Docker API version
 	}
@@ -118,6 +136,7 @@ func (c *Client) RequestRaw(ctx context.Context, method, path string, headers ma
 }
 
 // StreamRequest makes a streaming request (for logs, exec, events)
+// Uses the pre-initialized streamClient which has no timeout and proper connection pooling
 func (c *Client) StreamRequest(ctx context.Context, method, path string, headers map[string]string, body io.Reader) (*http.Response, error) {
 	url := fmt.Sprintf("http://localhost%s", path)
 
@@ -130,15 +149,8 @@ func (c *Client) StreamRequest(ctx context.Context, method, path string, headers
 		req.Header.Set(k, v)
 	}
 
-	// Use client without timeout for streaming
-	transport := &http.Transport{
-		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			return net.Dial("unix", c.socketPath)
-		},
-	}
-	streamClient := &http.Client{Transport: transport}
-
-	return streamClient.Do(req)
+	// Use pre-initialized stream client (no timeout, shared connection pool)
+	return c.streamClient.Do(req)
 }
 
 // GetDataRoot returns Docker's data root directory
@@ -176,8 +188,9 @@ type VersionInfo struct {
 	BuildTime     string `json:"BuildTime"`
 }
 
-// Close closes the Docker client
+// Close closes the Docker client and all its connections
 func (c *Client) Close() error {
 	c.httpClient.CloseIdleConnections()
+	c.streamClient.CloseIdleConnections()
 	return nil
 }

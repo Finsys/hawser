@@ -33,6 +33,10 @@ type Config struct {
 	RequestTimeout    int // Default: 30
 	ReconnectDelay    int // Initial reconnect delay, default: 1
 	MaxReconnectDelay int // Max reconnect delay, default: 60
+
+	// Version info (set by main.go from ldflags)
+	Version string
+	Commit  string
 }
 
 // Load reads configuration from environment variables and flags
