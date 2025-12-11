@@ -1,22 +1,4 @@
-# Build stage
-FROM golang:1.22-alpine AS builder
-
-WORKDIR /app
-
-# Install build dependencies
-RUN apk add --no-cache git ca-certificates
-
-# Copy go mod files
-COPY go.mod go.sum ./
-RUN go mod download
-
-# Copy source code
-COPY . .
-
-# Build binary
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o hawser ./cmd/hawser
-
-# Runtime stage
+# Runtime image - uses pre-built binary from goreleaser
 FROM alpine:3.19
 
 WORKDIR /app
@@ -27,11 +9,8 @@ RUN apk add --no-cache \
     docker-cli \
     docker-cli-compose
 
-# Copy binary from builder
-COPY --from=builder /app/hawser /usr/local/bin/hawser
-
-# Create non-root user (optional, but requires docker group)
-# RUN addgroup -S hawser && adduser -S hawser -G hawser
+# Copy pre-built binary (provided by goreleaser)
+COPY hawser /usr/local/bin/hawser
 
 # Environment variables with defaults
 ENV PORT=2375 \
