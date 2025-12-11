@@ -1,0 +1,31 @@
+[Unit]
+Description=Hawser - Remote Docker Agent for Dockhand
+Documentation=https://github.com/Finsys/hawser
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/hawser
+Restart=always
+RestartSec=10
+EnvironmentFile=/etc/hawser/config
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=hawser
+
+# Security hardening (relaxed for Docker access)
+NoNewPrivileges=false
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/run/docker.sock
+
+# Resource limits
+LimitNOFILE=65535
+LimitNPROC=4096
+
+[Install]
+WantedBy=multi-user.target
