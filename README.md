@@ -44,40 +44,6 @@ TOKEN=your-secret-token hawser --port 2376
 hawser --server wss://your-dockhand.example.com/api/hawser/connect --token your-token
 ```
 
-### Docker
-
-**Standard Mode** - Agent listens for connections:
-
-```bash
-docker run -d \
-  --name hawser \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -p 2376:2376 \
-  ghcr.io/finsys/hawser:latest
-```
-
-**Standard Mode with Token Authentication** (optional):
-
-```bash
-docker run -d \
-  --name hawser \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -p 2376:2376 \
-  -e TOKEN=your-secret-token \
-  ghcr.io/finsys/hawser:latest
-```
-
-**Edge Mode** - Agent connects to Dockhand:
-
-```bash
-docker run -d \
-  --name hawser \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -e DOCKHAND_SERVER_URL=wss://your-dockhand.example.com/api/hawser/connect \
-  -e TOKEN=your-agent-token \
-  ghcr.io/finsys/hawser:latest
-```
-
 ### Systemd Service
 
 #### Quick Install
@@ -241,6 +207,40 @@ sudo systemctl enable --now hawser
 # 6. Check status
 sudo systemctl status hawser
 sudo journalctl -u hawser -f
+```
+
+### Docker
+
+**Standard Mode** - Agent listens for connections:
+
+```bash
+docker run -d \
+  --name hawser \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -p 2376:2376 \
+  ghcr.io/finsys/hawser:latest
+```
+
+**Standard Mode with Token Authentication** (optional):
+
+```bash
+docker run -d \
+  --name hawser \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -p 2376:2376 \
+  -e TOKEN=your-secret-token \
+  ghcr.io/finsys/hawser:latest
+```
+
+**Edge Mode** - Agent connects to Dockhand:
+
+```bash
+docker run -d \
+  --name hawser \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -e DOCKHAND_SERVER_URL=wss://your-dockhand.example.com/api/hawser/connect \
+  -e TOKEN=your-agent-token \
+  ghcr.io/finsys/hawser:latest
 ```
 
 ## Configuration
