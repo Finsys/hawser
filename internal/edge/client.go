@@ -561,14 +561,7 @@ func (c *Client) handleExecStart(msg *protocol.ExecStartMessage) {
 	}
 	log.Debugf("Exec attach successful for session %s", msg.ExecID)
 
-	// Resize terminal to initial size
-	if msg.Cols > 0 && msg.Rows > 0 {
-		if err := c.dockerClient.ResizeExec(ctx, execResp.ID, msg.Rows, msg.Cols); err != nil {
-			log.Warnf("Failed to resize exec: %v", err)
-		}
-	}
-
-	// Store session
+	// Store session FIRST so resize/input messages don't fail
 	session := &ExecSession{
 		ExecID:       msg.ExecID,
 		DockerExecID: execResp.ID,
@@ -580,8 +573,17 @@ func (c *Client) handleExecStart(msg *protocol.ExecStartMessage) {
 	c.execSessions[msg.ExecID] = session
 	c.execSessionsMu.Unlock()
 
+	log.Debugf("Stored exec session %s", msg.ExecID)
+
 	// Send ready message
 	c.sendJSON(protocol.NewExecReadyMessage(msg.ExecID))
+
+	// Resize terminal to initial size (after session is stored)
+	if msg.Cols > 0 && msg.Rows > 0 {
+		if err := c.dockerClient.ResizeExec(ctx, execResp.ID, msg.Rows, msg.Cols); err != nil {
+			log.Warnf("Failed to resize exec: %v", err)
+		}
+	}
 
 	// Start reading output from Docker
 	go c.readExecOutput(session)
