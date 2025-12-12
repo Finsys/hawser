@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
 	"os/signal"
@@ -18,6 +19,24 @@ var (
 )
 
 func main() {
+	// Define flags
+	showHelp := flag.Bool("help", false, "Show help message")
+	showVersion := flag.Bool("version", false, "Show version information")
+
+	// Parse flags but allow unknown flags for subcommands like "standard"
+	flag.CommandLine.SetOutput(os.Stdout)
+	flag.Parse()
+
+	if *showHelp {
+		printHelp()
+		os.Exit(0)
+	}
+
+	if *showVersion {
+		fmt.Printf("hawser version %s (%s)\n", version, commit)
+		os.Exit(0)
+	}
+
 	cfg, err := config.Load()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
@@ -80,4 +99,49 @@ func printBanner(cfg *config.Config) {
 	fmt.Printf("Docker Socket: %s\n", cfg.DockerSocket)
 	fmt.Printf("Log Level: %s\n", log.GetLevel())
 	fmt.Println()
+}
+
+func printHelp() {
+	fmt.Println("Hawser - Remote Docker Agent for Dockhand")
+	fmt.Printf("Version: %s (%s)\n\n", version, commit)
+	fmt.Println("USAGE:")
+	fmt.Println("  hawser [OPTIONS]")
+	fmt.Println("  hawser standard [OPTIONS]    Run in Standard mode (HTTP server)")
+	fmt.Println()
+	fmt.Println("OPTIONS:")
+	fmt.Println("  --help       Show this help message")
+	fmt.Println("  --version    Show version information")
+	fmt.Println()
+	fmt.Println("STANDARD MODE OPTIONS:")
+	fmt.Println("  --port PORT  Port to listen on (default: 2376)")
+	fmt.Println()
+	fmt.Println("ENVIRONMENT VARIABLES:")
+	fmt.Println("  Edge Mode (connects outbound to Dockhand):")
+	fmt.Println("    DOCKHAND_SERVER_URL  WebSocket URL (e.g., wss://dockhand.example.com/api/hawser/connect)")
+	fmt.Println("    TOKEN                Authentication token from Dockhand")
+	fmt.Println()
+	fmt.Println("  Standard Mode (listens for incoming connections):")
+	fmt.Println("    PORT        Port to listen on (default: 2376)")
+	fmt.Println("    TOKEN       Optional authentication token")
+	fmt.Println("    TLS_CERT    Path to TLS certificate")
+	fmt.Println("    TLS_KEY     Path to TLS private key")
+	fmt.Println()
+	fmt.Println("  Common:")
+	fmt.Println("    DOCKER_SOCKET   Path to Docker socket (default: /var/run/docker.sock)")
+	fmt.Println("    AGENT_NAME      Human-readable name for this agent")
+	fmt.Println("    LOG_LEVEL       Logging level: debug, info, warn, error (default: info)")
+	fmt.Println()
+	fmt.Println("EXAMPLES:")
+	fmt.Println("  # Standard mode on default port")
+	fmt.Println("  hawser standard")
+	fmt.Println()
+	fmt.Println("  # Standard mode with custom port and token")
+	fmt.Println("  TOKEN=secret hawser standard --port 2375")
+	fmt.Println()
+	fmt.Println("  # Edge mode")
+	fmt.Println("  DOCKHAND_SERVER_URL=wss://dockhand.example.com/api/hawser/connect \\")
+	fmt.Println("  TOKEN=your-token \\")
+	fmt.Println("  hawser")
+	fmt.Println()
+	fmt.Println("For more information, visit: https://github.com/Finsys/hawser")
 }

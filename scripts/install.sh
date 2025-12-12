@@ -29,9 +29,18 @@ echo "Installing Hawser for ${OS}/${ARCH}..."
 
 # Determine download URL
 if [ "$VERSION" = "latest" ]; then
-    DOWNLOAD_URL="https://github.com/Finsys/hawser/releases/latest/download/hawser_${OS}_${ARCH}.tar.gz"
+    # Fetch the latest release version from GitHub API
+    LATEST_VERSION=$(curl -fsSL "https://api.github.com/repos/Finsys/hawser/releases/latest" | grep '"tag_name"' | sed -E 's/.*"tag_name": "v?([^"]+)".*/\1/')
+    if [ -z "$LATEST_VERSION" ]; then
+        echo "Error: Could not determine latest version"
+        exit 1
+    fi
+    echo "Latest version: $LATEST_VERSION"
+    DOWNLOAD_URL="https://github.com/Finsys/hawser/releases/download/v${LATEST_VERSION}/hawser_${LATEST_VERSION}_${OS}_${ARCH}.tar.gz"
 else
-    DOWNLOAD_URL="https://github.com/Finsys/hawser/releases/download/${VERSION}/hawser_${VERSION}_${OS}_${ARCH}.tar.gz"
+    # Remove 'v' prefix if present
+    VERSION_NUM="${VERSION#v}"
+    DOWNLOAD_URL="https://github.com/Finsys/hawser/releases/download/v${VERSION_NUM}/hawser_${VERSION_NUM}_${OS}_${ARCH}.tar.gz"
 fi
 
 # Create temporary directory
