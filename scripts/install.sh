@@ -119,6 +119,34 @@ EOF
 
     echo "Reloading systemd..."
     sudo systemctl daemon-reload
+    INIT_SYSTEM="systemd"
+elif command -v rc-service &> /dev/null; then
+    # OpenRC (Alpine Linux)
+    echo "Installing OpenRC service..."
+    sudo tee /etc/init.d/hawser > /dev/null << 'EOF'
+#!/sbin/openrc-run
+
+name="hawser"
+description="Hawser - Remote Docker Agent for Dockhand"
+command="/usr/local/bin/hawser"
+command_background="yes"
+pidfile="/run/${RC_SVCNAME}.pid"
+start_stop_daemon_args="--stdout /var/log/hawser.log --stderr /var/log/hawser.log"
+
+depend() {
+    need net docker
+    after docker
+}
+
+start_pre() {
+    if [ -f /etc/hawser/config ]; then
+        . /etc/hawser/config
+        export DOCKER_SOCKET PORT TLS_CERT TLS_KEY TOKEN DOCKHAND_SERVER_URL AGENT_NAME
+    fi
+}
+EOF
+    sudo chmod +x /etc/init.d/hawser
+    INIT_SYSTEM="openrc"
 fi
 
 echo ""
@@ -127,13 +155,21 @@ echo ""
 echo "Configuration: $CONFIG_DIR/config"
 echo ""
 
-if command -v systemctl &> /dev/null; then
+if [ "$INIT_SYSTEM" = "systemd" ]; then
     echo "Service management:"
     echo "  sudo systemctl start hawser    # Start the service"
     echo "  sudo systemctl stop hawser     # Stop the service"
     echo "  sudo systemctl status hawser   # Check service status"
     echo "  sudo systemctl enable hawser   # Enable on boot"
     echo "  sudo journalctl -u hawser -f   # View logs"
+    echo ""
+elif [ "$INIT_SYSTEM" = "openrc" ]; then
+    echo "Service management:"
+    echo "  sudo rc-service hawser start   # Start the service"
+    echo "  sudo rc-service hawser stop    # Stop the service"
+    echo "  sudo rc-service hawser status  # Check service status"
+    echo "  sudo rc-update add hawser      # Enable on boot"
+    echo "  tail -f /var/log/hawser.log    # View logs"
     echo ""
 fi
 
