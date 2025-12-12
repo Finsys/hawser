@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"crypto/tls"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -24,6 +25,7 @@ import (
 type Server struct {
 	cfg          *config.Config
 	dockerClient *docker.Client
+	compose      *docker.ComposeClient
 	httpServer   *http.Server
 }
 
@@ -44,9 +46,13 @@ func Run(cfg *config.Config, stop <-chan os.Signal) error {
 		log.Infof("Connected to Docker %s (API %s)", version.Version, version.APIVersion)
 	}
 
+	// Create compose client
+	composeClient := docker.NewComposeClient(cfg.DockerSocket)
+
 	server := &Server{
 		cfg:          cfg,
 		dockerClient: dockerClient,
+		compose:      composeClient,
 	}
 
 	// Create HTTP handler
@@ -54,6 +60,7 @@ func Run(cfg *config.Config, stop <-chan os.Signal) error {
 	mux.HandleFunc("/", server.handleProxy)
 	mux.HandleFunc("/_hawser/health", server.handleHealth)
 	mux.HandleFunc("/_hawser/info", server.handleInfo)
+	mux.HandleFunc("/_hawser/compose", server.handleCompose)
 
 	// Wrap with middleware
 	handler := server.authMiddleware(mux)
@@ -471,6 +478,34 @@ func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprintf(w, `{"agentId":"%s","agentName":"%s","dockerVersion":"%s","hawserVersion":"%s","mode":"standard"}`,
 		s.cfg.AgentID, s.cfg.AgentName, dockerVersion, hawserVersion)
+}
+
+// handleCompose handles Docker Compose operations
+func (s *Server) handleCompose(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var op docker.ComposeOperation
+	if err := json.NewDecoder(r.Body).Decode(&op); err != nil {
+		http.Error(w, "Invalid request body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	log.Debugf("Compose operation: %s on %s", op.Operation, op.ProjectName)
+
+	result, err := s.compose.Execute(r.Context(), &op)
+	if err != nil {
+		http.Error(w, "Compose error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if !result.Success {
+		w.WriteHeader(http.StatusInternalServerError)
+	}
+	json.NewEncoder(w).Encode(result)
 }
 
 // authMiddleware checks for valid token if configured
