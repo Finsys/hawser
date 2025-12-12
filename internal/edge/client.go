@@ -646,16 +646,25 @@ func (c *Client) eventsLoop(done <-chan struct{}) {
 // streamEvents connects to Docker events API and streams events
 func (c *Client) streamEvents(done <-chan struct{}) error {
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 
-	// Monitor done channel - use select to avoid goroutine leak
+	// Monitor goroutine - cancels context when done is signaled
+	// WaitGroup ensures goroutine exits before function returns
+	var wg sync.WaitGroup
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		select {
 		case <-done:
 			cancel()
 		case <-ctx.Done():
 			// Context was cancelled, exit goroutine cleanly
 		}
+	}()
+
+	// Ensure cleanup: cancel context (signals goroutine) and wait for it to exit
+	defer func() {
+		cancel()
+		wg.Wait()
 	}()
 
 	// Connect to Docker events stream with type=container filter

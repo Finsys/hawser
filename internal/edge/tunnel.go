@@ -22,6 +22,7 @@ type ExecTunnel struct {
 	requestID string
 	execID    string
 	conn      net.Conn
+	leftover  []byte // Data read past HTTP headers
 	mu        sync.Mutex
 	closed    bool
 }
@@ -172,6 +173,11 @@ func (t *ExecTunnel) Start(ctx context.Context, tty bool) error {
 		return fmt.Errorf("exec start failed: %s", response)
 	}
 
+	// Store any data read past the HTTP headers (initial terminal output)
+	if headerEnd < len(headerBuf) {
+		t.leftover = headerBuf[headerEnd:]
+	}
+
 	// Clear the read deadline for streaming
 	conn.SetReadDeadline(time.Time{})
 
@@ -197,6 +203,12 @@ func (t *ExecTunnel) Start(ctx context.Context, tty bool) error {
 // readLoop reads from Docker and sends to Dockhand
 func (t *ExecTunnel) readLoop(ctx context.Context) {
 	defer t.Close()
+
+	// First, send any leftover data from HTTP header parsing
+	if len(t.leftover) > 0 {
+		t.client.sendJSON(protocol.NewStreamMessage(t.requestID, t.leftover, "stdout"))
+		t.leftover = nil // Clear after sending
+	}
 
 	// Use pooled buffer for reading
 	bufPtr := pool.GetBuffer()
