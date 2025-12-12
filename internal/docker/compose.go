@@ -98,11 +98,26 @@ func (c *ComposeClient) Execute(ctx context.Context, op *ComposeOperation) (*Com
 	// Handle compose file content
 	var tempFile string
 	if op.ComposeFile != "" {
-		// Write compose content to temp file
-		tempDir := os.TempDir()
-		tempFile = filepath.Join(tempDir, fmt.Sprintf("hawser-compose-%s.yml", op.ProjectName))
-		if err := os.WriteFile(tempFile, []byte(op.ComposeFile), 0644); err != nil {
-			return nil, fmt.Errorf("failed to write compose file: %w", err)
+		// Try multiple directories for temp file (some environments have read-only /tmp)
+		tempDirs := []string{
+			os.TempDir(),
+			".",
+			os.Getenv("HOME"),
+		}
+
+		var writeErr error
+		for _, dir := range tempDirs {
+			if dir == "" {
+				continue
+			}
+			tempFile = filepath.Join(dir, fmt.Sprintf("hawser-compose-%s.yml", op.ProjectName))
+			if writeErr = os.WriteFile(tempFile, []byte(op.ComposeFile), 0644); writeErr == nil {
+				break
+			}
+			log.Debugf("Failed to write compose file to %s: %v", dir, writeErr)
+		}
+		if writeErr != nil {
+			return nil, fmt.Errorf("failed to write compose file (tried %v): %w", tempDirs, writeErr)
 		}
 		defer os.Remove(tempFile)
 		args = append(args, "-f", tempFile)
