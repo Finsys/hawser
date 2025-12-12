@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -137,6 +138,10 @@ func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
 		resp, err = s.dockerClient.RequestRaw(ctx, r.Method, r.URL.RequestURI(), headers, r.Body)
 	}
 	if err != nil {
+		// Don't log context canceled as error - client disconnected
+		if errors.Is(err, context.Canceled) {
+			return
+		}
 		log.Errorf("Docker request failed: %v", err)
 		http.Error(w, "Docker request failed: "+err.Error(), http.StatusBadGateway)
 		return
@@ -414,7 +419,8 @@ func (s *Server) streamResponse(w http.ResponseWriter, body io.Reader) {
 			flusher.Flush()
 		}
 		if err != nil {
-			if err != io.EOF {
+			// Don't log EOF or context canceled as errors - these are normal terminations
+			if err != io.EOF && !errors.Is(err, context.Canceled) {
 				log.Errorf("Stream error: %v", err)
 			}
 			return
