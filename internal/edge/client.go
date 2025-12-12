@@ -527,13 +527,6 @@ func (c *Client) sendJSON(v interface{}) error {
 	return c.conn.WriteJSON(v)
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 // handleExecStart starts a new exec session
 func (c *Client) handleExecStart(msg *protocol.ExecStartMessage) {
 	log.Infof("Starting exec session: %s in container %s", msg.ExecID, msg.ContainerID)
