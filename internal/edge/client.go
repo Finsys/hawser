@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -169,7 +170,7 @@ func (c *Client) sendHello() error {
 
 	hostname, _ := os.Hostname()
 
-	capabilities := []string{protocol.CapabilityExec, protocol.CapabilityMetrics}
+	capabilities := []string{protocol.CapabilityExec, protocol.CapabilityMetrics, protocol.CapabilityEvents}
 	if c.compose.IsAvailable() {
 		capabilities = append(capabilities, protocol.CapabilityCompose)
 	}
@@ -229,6 +230,9 @@ func (c *Client) run() {
 
 	// Start metrics sender
 	go c.metricsLoop(done)
+
+	// Start events sender
+	go c.eventsLoop(done)
 
 	// Message loop
 	for {
@@ -497,6 +501,188 @@ func (c *Client) metricsLoop(done <-chan struct{}) {
 			}
 			c.sendJSON(protocol.NewMetricsMessage(time.Now().Unix(), *hostMetrics))
 		}
+	}
+}
+
+// DockerEvent represents a Docker event from the events API
+type DockerEvent struct {
+	Type   string `json:"Type"`
+	Action string `json:"Action"`
+	Actor  struct {
+		ID         string            `json:"ID"`
+		Attributes map[string]string `json:"Attributes"`
+	} `json:"Actor"`
+	Time     int64 `json:"time"`
+	TimeNano int64 `json:"timeNano"`
+}
+
+// Container actions we care about
+var containerActions = map[string]bool{
+	"create":        true,
+	"start":         true,
+	"stop":          true,
+	"die":           true,
+	"kill":          true,
+	"restart":       true,
+	"pause":         true,
+	"unpause":       true,
+	"destroy":       true,
+	"rename":        true,
+	"update":        true,
+	"oom":           true,
+	"health_status": true,
+}
+
+// Scanner image patterns to exclude
+var scannerImages = []string{
+	"anchore/grype",
+	"aquasec/trivy",
+	"ghcr.io/anchore/grype",
+	"ghcr.io/aquasecurity/trivy",
+}
+
+// Container name prefixes to exclude
+var excludedPrefixes = []string{
+	"dockhand-browse-",
+}
+
+// isScannerImage checks if the image is a vulnerability scanner
+func isScannerImage(image string) bool {
+	lower := strings.ToLower(image)
+	for _, pattern := range scannerImages {
+		if strings.Contains(lower, strings.ToLower(pattern)) {
+			return true
+		}
+	}
+	return false
+}
+
+// isExcludedContainer checks if the container should be excluded
+func isExcludedContainer(name string) bool {
+	for _, prefix := range excludedPrefixes {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// eventsLoop streams Docker container events to Dockhand
+func (c *Client) eventsLoop(done <-chan struct{}) {
+	reconnectDelay := 5 * time.Second
+	maxReconnectDelay := 60 * time.Second
+
+	for {
+		select {
+		case <-done:
+			return
+		default:
+		}
+
+		err := c.streamEvents(done)
+		if err != nil {
+			log.Warnf("Docker events stream error: %v", err)
+		}
+
+		// Check if we should stop before reconnecting
+		select {
+		case <-done:
+			return
+		case <-time.After(reconnectDelay):
+			// Exponential backoff
+			reconnectDelay *= 2
+			if reconnectDelay > maxReconnectDelay {
+				reconnectDelay = maxReconnectDelay
+			}
+		}
+	}
+}
+
+// streamEvents connects to Docker events API and streams events
+func (c *Client) streamEvents(done <-chan struct{}) error {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Monitor done channel
+	go func() {
+		<-done
+		cancel()
+	}()
+
+	// Connect to Docker events stream with type=container filter
+	resp, err := c.dockerClient.StreamRequest(ctx, "GET", "/v1.43/events?type=container", nil, nil)
+	if err != nil {
+		return fmt.Errorf("failed to connect to events: %w", err)
+	}
+	defer resp.Body.Close()
+
+	log.Println("Connected to Docker events stream")
+
+	decoder := json.NewDecoder(resp.Body)
+	for {
+		select {
+		case <-done:
+			return nil
+		case <-ctx.Done():
+			return nil
+		default:
+		}
+
+		var event DockerEvent
+		if err := decoder.Decode(&event); err != nil {
+			if err == io.EOF {
+				return fmt.Errorf("events stream closed")
+			}
+			if ctx.Err() != nil {
+				return nil
+			}
+			return fmt.Errorf("decode error: %w", err)
+		}
+
+		// Only process container events
+		if event.Type != "container" {
+			continue
+		}
+
+		// Get action without any suffix (e.g., "health_status: healthy" -> "health_status")
+		action := strings.Split(event.Action, ":")[0]
+		action = strings.TrimSpace(action)
+
+		// Skip actions we don't care about
+		if !containerActions[action] {
+			continue
+		}
+
+		// Get container info
+		containerID := event.Actor.ID
+		containerName := event.Actor.Attributes["name"]
+		image := event.Actor.Attributes["image"]
+
+		// Skip scanner containers
+		if isScannerImage(image) {
+			continue
+		}
+
+		// Skip internal Dockhand containers
+		if isExcludedContainer(containerName) {
+			continue
+		}
+
+		// Convert timestamp to ISO 8601
+		timestamp := time.Unix(0, event.TimeNano).UTC().Format(time.RFC3339Nano)
+
+		// Create and send container event message
+		eventMsg := protocol.NewContainerEventMessage(protocol.ContainerEvent{
+			ContainerID:     containerID,
+			ContainerName:   containerName,
+			Image:           image,
+			Action:          action,
+			ActorAttributes: event.Actor.Attributes,
+			Timestamp:       timestamp,
+		})
+
+		log.Debugf("Container event: %s %s (%s)", action, containerName, image)
+		c.sendJSON(eventMsg)
 	}
 }
 

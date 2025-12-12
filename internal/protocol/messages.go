@@ -11,16 +11,17 @@ const ProtocolVersion = "1.0"
 
 // Message types
 const (
-	TypeHello     = "hello"      // Agent → Dockhand: Initial connection
-	TypeWelcome   = "welcome"    // Dockhand → Agent: Connection accepted
-	TypeRequest   = "request"    // Dockhand → Agent: Docker API request
-	TypeResponse  = "response"   // Agent → Dockhand: Docker API response
-	TypeStream    = "stream"     // Bidirectional: Streaming data (logs, exec)
-	TypeStreamEnd = "stream_end" // End of stream
-	TypeMetrics   = "metrics"    // Agent → Dockhand: Host metrics
-	TypePing      = "ping"       // Keepalive request
-	TypePong      = "pong"       // Keepalive response
-	TypeError     = "error"      // Error message
+	TypeHello          = "hello"           // Agent → Dockhand: Initial connection
+	TypeWelcome        = "welcome"         // Dockhand → Agent: Connection accepted
+	TypeRequest        = "request"         // Dockhand → Agent: Docker API request
+	TypeResponse       = "response"        // Agent → Dockhand: Docker API response
+	TypeStream         = "stream"          // Bidirectional: Streaming data (logs, exec)
+	TypeStreamEnd      = "stream_end"      // End of stream
+	TypeMetrics        = "metrics"         // Agent → Dockhand: Host metrics
+	TypeContainerEvent = "container_event" // Agent → Dockhand: Docker container event
+	TypePing           = "ping"            // Keepalive request
+	TypePong           = "pong"            // Keepalive response
+	TypeError          = "error"           // Error message
 
 	// Exec-specific message types for bidirectional terminal
 	TypeExecStart  = "exec_start"  // Dockhand → Agent: Start exec session
@@ -36,6 +37,7 @@ const (
 	CapabilityCompose = "compose" // Docker Compose support
 	CapabilityExec    = "exec"    // Interactive exec support
 	CapabilityMetrics = "metrics" // Host metrics collection
+	CapabilityEvents  = "events"  // Docker event streaming
 )
 
 // BaseMessage is the common structure for all messages
@@ -212,6 +214,30 @@ func NewMetricsMessage(timestamp int64, metrics HostMetrics) *MetricsMessage {
 		Type:      TypeMetrics,
 		Timestamp: timestamp,
 		Metrics:   metrics,
+	}
+}
+
+// ContainerEventMessage contains a Docker container event
+type ContainerEventMessage struct {
+	Type  string         `json:"type"`
+	Event ContainerEvent `json:"event"`
+}
+
+// ContainerEvent contains container event details
+type ContainerEvent struct {
+	ContainerID     string            `json:"containerId"`
+	ContainerName   string            `json:"containerName,omitempty"`
+	Image           string            `json:"image,omitempty"`
+	Action          string            `json:"action"`
+	ActorAttributes map[string]string `json:"actorAttributes,omitempty"`
+	Timestamp       string            `json:"timestamp"` // ISO 8601 format
+}
+
+// NewContainerEventMessage creates a new container event message
+func NewContainerEventMessage(event ContainerEvent) *ContainerEventMessage {
+	return &ContainerEventMessage{
+		Type:  TypeContainerEvent,
+		Event: event,
 	}
 }
 
