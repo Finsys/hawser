@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 
 	"github.com/Finsys/hawser/internal/log"
@@ -95,32 +94,12 @@ func (c *ComposeClient) Execute(ctx context.Context, op *ComposeOperation) (*Com
 		args = append(args, "-p", op.ProjectName)
 	}
 
-	// Handle compose file content
-	var tempFile string
+	// Handle compose file content via stdin (no temp file needed)
+	// Using -f - tells docker compose to read from stdin
+	var stdinContent string
 	if op.ComposeFile != "" {
-		// Try multiple directories for temp file (some environments have read-only /tmp)
-		tempDirs := []string{
-			os.TempDir(),
-			".",
-			os.Getenv("HOME"),
-		}
-
-		var writeErr error
-		for _, dir := range tempDirs {
-			if dir == "" {
-				continue
-			}
-			tempFile = filepath.Join(dir, fmt.Sprintf("hawser-compose-%s.yml", op.ProjectName))
-			if writeErr = os.WriteFile(tempFile, []byte(op.ComposeFile), 0644); writeErr == nil {
-				break
-			}
-			log.Debugf("Failed to write compose file to %s: %v", dir, writeErr)
-		}
-		if writeErr != nil {
-			return nil, fmt.Errorf("failed to write compose file (tried %v): %w", tempDirs, writeErr)
-		}
-		defer os.Remove(tempFile)
-		args = append(args, "-f", tempFile)
+		stdinContent = op.ComposeFile
+		args = append(args, "-f", "-")
 	}
 
 	// Add operation-specific arguments
@@ -172,6 +151,11 @@ func (c *ComposeClient) Execute(ctx context.Context, op *ComposeOperation) (*Com
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
+
+	// Pipe compose content via stdin if provided
+	if stdinContent != "" {
+		cmd.Stdin = strings.NewReader(stdinContent)
+	}
 
 	err := cmd.Run()
 
