@@ -84,6 +84,10 @@ PORT=2376
 # DOCKHAND_SERVER_URL=wss://your-dockhand.example.com/api/hawser/connect
 # TOKEN=your-agent-token-taken-from-dockhand
 
+# TLS configuration for self-signed Dockhand (optional, Edge mode only)
+# CA_CERT=/etc/hawser/dockhand-ca.crt
+# TLS_SKIP_VERIFY=false
+
 # Agent identification (optional)
 # AGENT_NAME=my-server
 EOF
@@ -141,7 +145,7 @@ depend() {
 start_pre() {
     if [ -f /etc/hawser/config ]; then
         . /etc/hawser/config
-        export DOCKER_SOCKET PORT TLS_CERT TLS_KEY TOKEN DOCKHAND_SERVER_URL AGENT_NAME
+        export DOCKER_SOCKET PORT TLS_CERT TLS_KEY TOKEN DOCKHAND_SERVER_URL AGENT_NAME CA_CERT TLS_SKIP_VERIFY
     fi
 }
 EOF
