@@ -127,12 +127,27 @@ EOF
 elif command -v rc-service &> /dev/null; then
     # OpenRC (Alpine Linux)
     echo "Installing OpenRC service..."
+
+    # Create wrapper script that sources config and runs hawser
+    sudo tee /usr/local/bin/hawser-wrapper > /dev/null << 'EOF'
+#!/bin/sh
+# Wrapper script for hawser that loads config file
+if [ -f /etc/hawser/config ]; then
+    set -a  # Automatically export all variables
+    . /etc/hawser/config
+    set +a
+fi
+exec /usr/local/bin/hawser "$@"
+EOF
+    sudo chmod +x /usr/local/bin/hawser-wrapper
+
+    # Create init script that uses the wrapper
     sudo tee /etc/init.d/hawser > /dev/null << 'EOF'
 #!/sbin/openrc-run
 
 name="hawser"
 description="Hawser - Remote Docker Agent for Dockhand"
-command="/usr/local/bin/hawser"
+command="/usr/local/bin/hawser-wrapper"
 command_background="yes"
 pidfile="/run/${RC_SVCNAME}.pid"
 start_stop_daemon_args="--stdout /var/log/hawser.log --stderr /var/log/hawser.log"
@@ -140,13 +155,6 @@ start_stop_daemon_args="--stdout /var/log/hawser.log --stderr /var/log/hawser.lo
 depend() {
     need net docker
     after docker
-}
-
-start_pre() {
-    if [ -f /etc/hawser/config ]; then
-        . /etc/hawser/config
-        export DOCKER_SOCKET PORT TLS_CERT TLS_KEY TOKEN DOCKHAND_SERVER_URL AGENT_NAME CA_CERT TLS_SKIP_VERIFY
-    fi
 }
 EOF
     sudo chmod +x /etc/init.d/hawser
