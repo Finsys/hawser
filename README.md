@@ -311,6 +311,51 @@ docker run -d \
   ghcr.io/finsys/hawser:latest
 ```
 
+### Building Docker image locally
+
+For local development or custom builds, use the multi-stage `Dockerfile.dev` which builds from source:
+
+```bash
+# Clone repository
+git clone https://github.com/Finsys/hawser.git
+cd hawser
+
+# Build from source (recommended for local development)
+docker build -f Dockerfile.dev -t hawser:local .
+
+# Run locally built image - Standard mode
+docker run -d \
+  --name hawser \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -p 2376:2376 \
+  hawser:local
+
+# Run locally built image - Edge mode
+docker run -d \
+  --name hawser \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -e DOCKHAND_SERVER_URL=wss://your-dockhand.example.com/api/hawser/connect \
+  -e TOKEN=your-agent-token \
+  hawser:local
+```
+
+**Note**: The default `Dockerfile` is used by GoReleaser for release builds and expects a pre-built binary. Use `Dockerfile.dev` for building from source.
+
+### Multi-architecture builds
+
+The official images on `ghcr.io/finsys/hawser` are multi-arch (amd64 + arm64). For local multi-arch builds:
+
+```bash
+# Create a builder (first time only)
+docker buildx create --name mybuilder --use
+
+# Build for multiple platforms
+docker buildx build -f Dockerfile.dev \
+  --platform linux/amd64,linux/arm64 \
+  -t hawser:local \
+  --load .
+```
+
 ## Configuration
 
 Hawser is configured via environment variables:
