@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -41,6 +42,10 @@ type Client struct {
 	// Active exec sessions
 	execSessions   map[string]*ExecSession
 	execSessionsMu sync.RWMutex
+
+	// Connection status for health checks
+	connected   bool
+	connectedMu sync.RWMutex
 }
 
 // ExecSession tracks an active exec/terminal session
@@ -84,6 +89,9 @@ func Run(cfg *config.Config, stop <-chan os.Signal) error {
 		streams:      make(map[string]*StreamContext),
 		execSessions: make(map[string]*ExecSession),
 	}
+
+	// Start health server for Docker health checks
+	go client.startHealthServer()
 
 	return client.runWithReconnect()
 }
@@ -256,6 +264,10 @@ func (c *Client) waitForWelcome() error {
 // run handles the main message loop
 func (c *Client) run() {
 	done := make(chan struct{})
+
+	// Mark as connected for health checks
+	c.setConnected(true)
+	defer c.setConnected(false)
 
 	// Start heartbeat
 	go c.heartbeatLoop(done)
@@ -489,7 +501,7 @@ func (c *Client) handleStreamingRequest(req *protocol.RequestMessage, headers ma
 			c.sendJSON(protocol.NewStreamMessage(req.RequestID, data, ""))
 		}
 		if err != nil {
-			if err != io.EOF {
+			if err != io.EOF && !errors.Is(err, context.Canceled) {
 				log.Errorf("Stream read error: %v", err)
 			}
 			return
@@ -1011,5 +1023,80 @@ func (c *Client) close() {
 	if c.conn != nil {
 		c.conn.Close()
 		c.conn = nil
+	}
+}
+
+// setConnected updates the connection status
+func (c *Client) setConnected(status bool) {
+	c.connectedMu.Lock()
+	c.connected = status
+	c.connectedMu.Unlock()
+}
+
+// isConnected returns true if connected to Dockhand
+func (c *Client) isConnected() bool {
+	c.connectedMu.RLock()
+	defer c.connectedMu.RUnlock()
+	return c.connected
+}
+
+// startHealthServer starts a minimal HTTP server for Docker health checks
+func (c *Client) startHealthServer() {
+	mux := http.NewServeMux()
+
+	// Health endpoint - same as Standard mode
+	mux.HandleFunc("/_hawser/health", func(w http.ResponseWriter, r *http.Request) {
+		// Check Docker connectivity
+		if err := c.dockerClient.Ping(r.Context()); err != nil {
+			http.Error(w, "Docker unhealthy: "+err.Error(), http.StatusServiceUnavailable)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		if c.isConnected() {
+			w.Write([]byte(`{"status":"healthy","mode":"edge","connected":true}`))
+		} else {
+			w.Write([]byte(`{"status":"healthy","mode":"edge","connected":false}`))
+		}
+	})
+
+	// Info endpoint
+	mux.HandleFunc("/_hawser/info", func(w http.ResponseWriter, r *http.Request) {
+		version, _ := c.dockerClient.GetVersion(r.Context())
+		dockerVersion := "unknown"
+		if version != nil {
+			dockerVersion = version.Version
+		}
+
+		hawserVersion := c.cfg.Version
+		if hawserVersion == "" {
+			hawserVersion = "dev"
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"agentId":"%s","agentName":"%s","dockerVersion":"%s","hawserVersion":"%s","mode":"edge","connected":%v}`,
+			c.cfg.AgentID, c.cfg.AgentName, dockerVersion, hawserVersion, c.isConnected())
+	})
+
+	addr := fmt.Sprintf(":%d", c.cfg.Port)
+	server := &http.Server{
+		Addr:         addr,
+		Handler:      mux,
+		ReadTimeout:  5 * time.Second,
+		WriteTimeout: 5 * time.Second,
+	}
+
+	log.Infof("Starting health server on %s", addr)
+
+	// Run until stop signal
+	go func() {
+		<-c.stop
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		server.Shutdown(ctx)
+	}()
+
+	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		log.Warnf("Health server error: %v", err)
 	}
 }

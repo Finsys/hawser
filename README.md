@@ -356,6 +356,57 @@ docker buildx build -f Dockerfile.dev \
   --load .
 ```
 
+### Docker health check
+
+The Hawser Docker image includes a built-in health check that verifies Docker connectivity. This works in **both Standard and Edge modes**.
+
+**How it works:**
+
+- The container runs `wget` against the `/_hawser/health` endpoint every 30 seconds
+- Both modes expose a minimal HTTP server on the configured port (default: 2376) for health checks
+- The health check verifies that Hawser can communicate with the Docker daemon
+
+**Health check response:**
+
+```bash
+# Standard mode
+curl http://localhost:2376/_hawser/health
+{"status":"healthy"}
+
+# Edge mode (includes connection status)
+curl http://localhost:2376/_hawser/health
+{"status":"healthy","mode":"edge","connected":true}
+```
+
+**Container status:**
+
+```bash
+# Check container health status
+docker inspect --format='{{.State.Health.Status}}' hawser
+# healthy
+
+# View health check logs
+docker inspect --format='{{json .State.Health}}' hawser | jq
+```
+
+**Custom health check (optional):**
+
+If you need custom health check settings, you can override the built-in health check:
+
+```bash
+docker run -d \
+  --name hawser \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -e DOCKHAND_SERVER_URL=wss://your-dockhand.example.com/api/hawser/connect \
+  -e TOKEN=your-agent-token \
+  --health-cmd="wget -q --spider http://localhost:2376/_hawser/health || exit 1" \
+  --health-interval=30s \
+  --health-timeout=5s \
+  --health-retries=3 \
+  --health-start-period=10s \
+  ghcr.io/finsys/hawser:latest
+```
+
 ## Configuration
 
 Hawser is configured via environment variables:
@@ -466,8 +517,13 @@ In Standard mode, Hawser proxies all Docker API endpoints plus:
 ### Health Check
 
 ```bash
+# Standard mode
 curl http://localhost:2376/_hawser/health
 # {"status":"healthy"}
+
+# Edge mode (includes WebSocket connection status)
+curl http://localhost:2376/_hawser/health
+# {"status":"healthy","mode":"edge","connected":true}
 ```
 
 ## Security Considerations
