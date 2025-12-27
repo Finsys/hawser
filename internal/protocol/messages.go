@@ -206,6 +206,7 @@ type HostMetrics struct {
 	DiskFree       uint64  `json:"diskFree"`       // Bytes
 	NetworkRxBytes uint64  `json:"networkRxBytes"` // Total received bytes
 	NetworkTxBytes uint64  `json:"networkTxBytes"` // Total transmitted bytes
+	Uptime         uint64  `json:"uptime"`         // Host uptime in seconds
 }
 
 // NewMetricsMessage creates a new metrics message

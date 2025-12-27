@@ -479,9 +479,12 @@ func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
 		hawserVersion = "dev"
 	}
 
+	// Get host uptime
+	uptime := getHostUptime()
+
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, `{"agentId":"%s","agentName":"%s","dockerVersion":"%s","hawserVersion":"%s","mode":"standard"}`,
-		s.cfg.AgentID, s.cfg.AgentName, dockerVersion, hawserVersion)
+	fmt.Fprintf(w, `{"agentId":"%s","agentName":"%s","dockerVersion":"%s","hawserVersion":"%s","mode":"standard","uptime":%d}`,
+		s.cfg.AgentID, s.cfg.AgentName, dockerVersion, hawserVersion, uptime)
 }
 
 // handleCompose handles Docker Compose operations
@@ -620,4 +623,26 @@ func isHopByHopHeader(header string) bool {
 		}
 	}
 	return false
+}
+
+// getHostUptime reads host uptime from /proc/uptime (Linux only)
+func getHostUptime() uint64 {
+	file, err := os.Open("/proc/uptime")
+	if err != nil {
+		return 0
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	if scanner.Scan() {
+		line := scanner.Text()
+		fields := strings.Fields(line)
+		if len(fields) >= 1 {
+			// First field is uptime in seconds (with decimals)
+			var uptime float64
+			fmt.Sscanf(fields[0], "%f", &uptime)
+			return uint64(uptime)
+		}
+	}
+	return 0
 }

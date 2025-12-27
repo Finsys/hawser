@@ -73,6 +73,12 @@ func (c *Collector) Collect() (*protocol.HostMetrics, error) {
 		metrics.NetworkTxBytes = txBytes
 	}
 
+	// Collect host uptime
+	uptime, err := c.collectUptime()
+	if err == nil {
+		metrics.Uptime = uptime
+	}
+
 	return metrics, nil
 }
 
@@ -264,4 +270,32 @@ func (c *Collector) collectNetwork() (rxBytes, txBytes uint64, err error) {
 	}
 
 	return rxBytes, txBytes, nil
+}
+
+// collectUptime reads host uptime from /proc/uptime
+func (c *Collector) collectUptime() (uint64, error) {
+	if runtime.GOOS != "linux" {
+		return 0, nil
+	}
+
+	file, err := os.Open("/proc/uptime")
+	if err != nil {
+		return 0, err
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	if scanner.Scan() {
+		line := scanner.Text()
+		fields := strings.Fields(line)
+		if len(fields) >= 1 {
+			// First field is uptime in seconds (with decimals)
+			uptime, err := strconv.ParseFloat(fields[0], 64)
+			if err == nil {
+				return uint64(uptime), nil
+			}
+		}
+	}
+
+	return 0, nil
 }
