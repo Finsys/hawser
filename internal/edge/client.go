@@ -220,12 +220,19 @@ func (c *Client) sendHello() error {
 		capabilities = append(capabilities, protocol.CapabilityCompose)
 	}
 
+	// Get hawser version from config (set at build time via ldflags)
+	hawserVersion := c.cfg.Version
+	if hawserVersion == "" {
+		hawserVersion = "dev"
+	}
+
 	hello := protocol.NewHelloMessage(
 		c.cfg.AgentID,
 		c.cfg.AgentName,
 		c.cfg.Token,
 		dockerVersion,
 		hostname,
+		hawserVersion,
 		capabilities,
 	)
 

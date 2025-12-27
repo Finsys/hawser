@@ -48,7 +48,8 @@ type BaseMessage struct {
 // HelloMessage is sent by agent on connect
 type HelloMessage struct {
 	Type          string   `json:"type"`
-	Version       string   `json:"version"`
+	Version       string   `json:"version"`         // Hawser agent version
+	Protocol      string   `json:"protocol"`        // Protocol version for compatibility
 	AgentID       string   `json:"agentId"`
 	AgentName     string   `json:"agentName"`
 	Token         string   `json:"token"`
@@ -58,10 +59,11 @@ type HelloMessage struct {
 }
 
 // NewHelloMessage creates a new hello message
-func NewHelloMessage(agentID, agentName, token, dockerVersion, hostname string, capabilities []string) *HelloMessage {
+func NewHelloMessage(agentID, agentName, token, dockerVersion, hostname, hawserVersion string, capabilities []string) *HelloMessage {
 	return &HelloMessage{
 		Type:          TypeHello,
-		Version:       ProtocolVersion,
+		Version:       hawserVersion,
+		Protocol:      ProtocolVersion,
 		AgentID:       agentID,
 		AgentName:     agentName,
 		Token:         token,
