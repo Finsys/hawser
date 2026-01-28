@@ -174,7 +174,7 @@ func (c *Client) RequestRaw(ctx context.Context, method, path string, headers ma
 // StreamRequest makes a streaming request (for logs, exec, events)
 // Uses the pre-initialized streamClient which has no timeout and proper connection pooling
 func (c *Client) StreamRequest(ctx context.Context, method, path string, headers map[string]string, body io.Reader) (*http.Response, error) {
-	url := fmt.Sprintf("http://localhost%s", path)
+	url := fmt.Sprintf("http://localhost/%s%s", c.apiVersion, path)
 
 	req, err := http.NewRequestWithContext(ctx, method, url, body)
 	if err != nil {

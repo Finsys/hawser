@@ -319,11 +319,11 @@ func (c *ComposeClient) Execute(ctx context.Context, op *ComposeOperation) (*Com
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			result.ExitCode = exitErr.ExitCode()
 		}
-		result.Error = stderr.String()
+		result.Error = strings.TrimSpace(stderr.String())
 		if result.Error == "" {
 			result.Error = err.Error()
 		}
-		log.Debugf("Compose failed: exit=%d error=%s", result.ExitCode, result.Error)
+		log.Errorf("Compose failed: exit=%d error=%s", result.ExitCode, result.Error)
 	} else {
 		log.Debugf("Compose completed: %s (project=%s)", op.Operation, op.ProjectName)
 	}
