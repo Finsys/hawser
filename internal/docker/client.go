@@ -22,7 +22,7 @@ type Client struct {
 }
 
 // Default API version if negotiation fails
-const defaultAPIVersion = "v1.43"
+const defaultAPIVersion = "v1.44"
 
 // NewClient creates a new Docker client
 func NewClient(socketPath string) (*Client, error) {
