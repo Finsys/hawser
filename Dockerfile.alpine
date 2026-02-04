@@ -1,0 +1,67 @@
+#
+# Dockerfile.dev requires apko tool and wolfi packages.
+# Even if have apko armv7l, wolfi seems to only have armv8/arm64 packages, so stymied.
+#
+# As such, this is just a alpine build, not a wolfi "Security-Hardened Build".
+#
+# To build image:
+#   docker build -t hawser:alpine -f Dockerfile.alpine .
+#
+# To manually move an image from one host to another:
+#   host1$ docker image save -o hawser.tar hawser:alpine
+#   host2$ docker image load -i hawser.tar
+#
+
+# -----------------------------------------------------------------------------
+# Stage 1: Go Builder
+# -----------------------------------------------------------------------------
+FROM golang:1.24-alpine AS builder
+
+WORKDIR /src
+
+# Download dependencies first (better caching)
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy source and build
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -trimpath -o /hawser ./cmd/hawser
+
+# -----------------------------------------------------------------------------
+# Stage 2: Final Image, from alpine as Wolfi not available for all architectures
+# -----------------------------------------------------------------------------
+FROM alpine:latest
+
+RUN apk add --no-cache ca-certificates docker-cli docker-compose wget
+
+WORKDIR /app
+
+# Set up environment variables
+ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
+    PORT=2376 \
+    DOCKER_SOCKET=/var/run/docker.sock \
+    HEARTBEAT_INTERVAL=30 \
+    REQUEST_TIMEOUT=30 \
+    RECONNECT_DELAY=1 \
+    MAX_RECONNECT_DELAY=60
+
+# Create data directory
+RUN mkdir -p /data/stacks
+
+# Declare as volume to ensure writability even with --read-only
+VOLUME /data/stacks
+
+# Copy binary from builder
+COPY --from=builder /hawser /usr/local/bin/hawser
+RUN chmod +x /usr/local/bin/hawser
+
+# Expose default port
+EXPOSE 2376
+
+# Health check - auto-detects TLS mode
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
+    CMD if [ -n "$TLS_CERT" ]; then wget -q --spider --no-check-certificate https://localhost:${PORT}/_hawser/health; else wget -q --spider http://localhost:${PORT}/_hawser/health; fi || exit 1
+
+# Run as root to access Docker socket (can be changed with --user flag)
+ENTRYPOINT ["/usr/local/bin/hawser"]
