@@ -41,6 +41,7 @@ var deniedEnvKeys = map[string]bool{
 // ComposeClient handles Docker Compose operations
 type ComposeClient struct {
 	dockerSocket   string
+	dockerHost     string   // TCP host (e.g., "tcp://socket-proxy:2375"); empty means use Unix socket
 	composeCmd     string   // "docker" for v2, "docker-compose" for v1
 	composeArgs    []string // ["compose"] for v2, [] for v1
 	composeChecked bool
@@ -48,12 +49,23 @@ type ComposeClient struct {
 	stacksDir      string // Base directory for stack files
 }
 
-// NewComposeClient creates a new Compose client
-func NewComposeClient(dockerSocket, stacksDir string) *ComposeClient {
+// NewComposeClient creates a new Compose client.
+// If dockerHost is non-empty, subprocess DOCKER_HOST is set to the TCP address;
+// otherwise it is set to unix://<dockerSocket>.
+func NewComposeClient(dockerSocket, dockerHost, stacksDir string) *ComposeClient {
 	return &ComposeClient{
 		dockerSocket: dockerSocket,
+		dockerHost:   dockerHost,
 		stacksDir:    stacksDir,
 	}
+}
+
+// dockerHostEnv returns the DOCKER_HOST environment variable value for subprocesses.
+func (c *ComposeClient) dockerHostEnv() string {
+	if c.dockerHost != "" {
+		return fmt.Sprintf("DOCKER_HOST=%s", c.dockerHost)
+	}
+	return fmt.Sprintf("DOCKER_HOST=unix://%s", c.dockerSocket)
 }
 
 // SetAPIVersion sets the Docker API version to use for compose commands.
@@ -156,7 +168,7 @@ func (c *ComposeClient) loginToRegistries(ctx context.Context, registries []Regi
 		log.Debugf("Compose: Logging into registry %s", registryHost)
 
 		cmd := exec.CommandContext(ctx, "docker", "login", "-u", reg.Username, "--password-stdin", registryHost)
-		cmd.Env = append(os.Environ(), fmt.Sprintf("DOCKER_HOST=unix://%s", c.dockerSocket))
+		cmd.Env = append(os.Environ(), c.dockerHostEnv())
 		cmd.Stdin = strings.NewReader(reg.Password)
 
 		var stderr bytes.Buffer
@@ -402,8 +414,8 @@ func (c *ComposeClient) Execute(ctx context.Context, op *ComposeOperation) (*Com
 		cmd.Dir = op.WorkDir
 	}
 
-	// Set Docker socket environment
-	cmd.Env = append(os.Environ(), fmt.Sprintf("DOCKER_HOST=unix://%s", c.dockerSocket))
+	// Set Docker host environment (TCP or Unix socket)
+	cmd.Env = append(os.Environ(), c.dockerHostEnv())
 
 	// Set API version for compatibility with newer Docker daemons
 	// This allows older docker CLI to work with newer daemons

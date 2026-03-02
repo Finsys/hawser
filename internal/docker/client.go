@@ -15,7 +15,8 @@ import (
 
 // Client wraps Docker API operations
 type Client struct {
-	socketPath   string
+	socketPath   string // Unix socket path (used when dockerHost is empty)
+	dockerHost   string // TCP host (e.g., "tcp://socket-proxy:2375")
 	httpClient   *http.Client
 	streamClient *http.Client // Separate client for streaming (no timeout)
 	apiVersion   string
@@ -29,28 +30,72 @@ func (c *Client) GetAPIVersion() string {
 	return c.apiVersion
 }
 
-// GetSocketPath returns the Docker socket path for raw connections
+// GetSocketPath returns the Docker socket path for raw connections.
+// Returns empty string when using a TCP host.
 func (c *Client) GetSocketPath() string {
 	return c.socketPath
 }
 
-// NewClient creates a new Docker client
+// GetDockerHost returns the TCP Docker host (e.g., "tcp://socket-proxy:2375").
+// Returns empty string when using a Unix socket.
+func (c *Client) GetDockerHost() string {
+	return c.dockerHost
+}
+
+// IsTCP returns true if the client is connected via TCP rather than a Unix socket.
+func (c *Client) IsTCP() bool {
+	return c.dockerHost != ""
+}
+
+// DialDocker opens a raw connection to the Docker daemon.
+// Uses TCP when DockerHost is configured, Unix socket otherwise.
+func (c *Client) DialDocker() (net.Conn, error) {
+	if c.dockerHost != "" {
+		return net.Dial("tcp", parseTCPAddr(c.dockerHost))
+	}
+	return net.Dial("unix", c.socketPath)
+}
+
+// parseTCPAddr strips the tcp:// prefix from a Docker host URL,
+// returning a bare host:port suitable for net.Dial("tcp", ...).
+func parseTCPAddr(dockerHost string) string {
+	return strings.TrimPrefix(dockerHost, "tcp://")
+}
+
+// NewClient creates a new Docker client connected via Unix socket.
+// For TCP connections, use NewClientWithHost instead.
 func NewClient(socketPath string) (*Client, error) {
-	// Create HTTP transport for Unix socket
-	transport := &http.Transport{
-		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+	return NewClientWithHost(socketPath, "")
+}
+
+// NewClientWithHost creates a new Docker client.
+// If dockerHost is set (e.g., "tcp://socket-proxy:2375"), it connects via TCP.
+// Otherwise, it connects via the Unix socket at socketPath.
+func NewClientWithHost(socketPath, dockerHost string) (*Client, error) {
+	var dialFunc func(ctx context.Context, network, addr string) (net.Conn, error)
+
+	if dockerHost != "" {
+		tcpAddr := parseTCPAddr(dockerHost)
+		dialFunc = func(ctx context.Context, network, addr string) (net.Conn, error) {
+			return net.Dial("tcp", tcpAddr)
+		}
+		log.Infof("Using TCP Docker connection: %s", dockerHost)
+	} else {
+		dialFunc = func(ctx context.Context, network, addr string) (net.Conn, error) {
 			return net.Dial("unix", socketPath)
-		},
+		}
+	}
+
+	transport := &http.Transport{
+		DialContext:         dialFunc,
 		MaxIdleConns:        100,
 		MaxIdleConnsPerHost: 100,
 		IdleConnTimeout:     90 * time.Second,
 	}
 
-	// Create streaming transport (same settings, reused for all streaming requests)
+	// Create streaming transport (same dial, no idle timeout)
 	streamTransport := &http.Transport{
-		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			return net.Dial("unix", socketPath)
-		},
+		DialContext:         dialFunc,
 		MaxIdleConns:        100,
 		MaxIdleConnsPerHost: 100,
 		IdleConnTimeout:     0, // No idle timeout for streaming connections
@@ -58,6 +103,7 @@ func NewClient(socketPath string) (*Client, error) {
 
 	client := &Client{
 		socketPath: socketPath,
+		dockerHost: dockerHost,
 		httpClient: &http.Client{
 			Transport: transport,
 			Timeout:   30 * time.Second,
@@ -306,8 +352,8 @@ type HijackedConn struct {
 
 // StartExecAttach starts an exec instance and returns a hijacked connection
 func (c *Client) StartExecAttach(ctx context.Context, execID string) (*HijackedConn, error) {
-	// Connect directly to the Unix socket
-	conn, err := net.Dial("unix", c.socketPath)
+	// Connect directly to Docker daemon (Unix socket or TCP)
+	conn, err := c.DialDocker()
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to Docker socket: %w", err)
 	}
