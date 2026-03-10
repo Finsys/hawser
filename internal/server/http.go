@@ -32,8 +32,8 @@ type Server struct {
 
 // Run starts the Standard mode HTTP server
 func Run(cfg *config.Config, stop <-chan os.Signal) error {
-	// Create Docker client
-	dockerClient, err := docker.NewClient(cfg.DockerSocket)
+	// Create Docker client (TCP if DOCKER_HOST is set, Unix socket otherwise)
+	dockerClient, err := docker.NewClientWithHost(cfg.DockerSocket, cfg.DockerHost)
 	if err != nil {
 		return fmt.Errorf("failed to create Docker client: %w", err)
 	}
@@ -48,7 +48,7 @@ func Run(cfg *config.Config, stop <-chan os.Signal) error {
 	}
 
 	// Create compose client with API version negotiation
-	composeClient := docker.NewComposeClient(cfg.DockerSocket, cfg.StacksDir)
+	composeClient := docker.NewComposeClient(cfg.DockerSocket, cfg.DockerHost, cfg.StacksDir)
 	if version != nil && version.APIVersion != "" {
 		composeClient.SetAPIVersion(version.APIVersion)
 		log.Debugf("Compose client using API version %s", version.APIVersion)
@@ -215,8 +215,8 @@ func (s *Server) handleExecHijack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Open raw connection to Docker socket
-	dockerConn, err := net.Dial("unix", s.cfg.DockerSocket)
+	// Open raw connection to Docker daemon (Unix socket or TCP)
+	dockerConn, err := s.dockerClient.DialDocker()
 	if err != nil {
 		http.Error(w, "Failed to connect to Docker: "+err.Error(), http.StatusBadGateway)
 		return
@@ -354,8 +354,8 @@ func (s *Server) handleExecHijack(w http.ResponseWriter, r *http.Request) {
 // Uses http.ReadResponse to correctly handle chunked transfer encoding from Docker
 func (s *Server) handleEventsStream(w http.ResponseWriter, r *http.Request) {
 
-	// Open raw connection to Docker socket
-	dockerConn, err := net.Dial("unix", s.cfg.DockerSocket)
+	// Open raw connection to Docker daemon (Unix socket or TCP)
+	dockerConn, err := s.dockerClient.DialDocker()
 	if err != nil {
 		http.Error(w, "Failed to connect to Docker: "+err.Error(), http.StatusBadGateway)
 		return

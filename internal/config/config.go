@@ -131,8 +131,14 @@ func (c *Config) validate() error {
 		return fmt.Errorf("PORT must be between 1 and 65535")
 	}
 
-	// Validate docker socket exists (if using socket)
-	if c.DockerHost == "" {
+	// Validate Docker connection
+	if c.DockerHost != "" {
+		// TCP mode: validate the host URL format (tcp:// is the Docker convention)
+		if !strings.HasPrefix(c.DockerHost, "tcp://") {
+			return fmt.Errorf("DOCKER_HOST must start with tcp://, got %s", c.DockerHost)
+		}
+	} else {
+		// Unix socket mode: validate the socket file exists
 		if _, err := os.Stat(c.DockerSocket); os.IsNotExist(err) {
 			return fmt.Errorf("Docker socket not found at %s", c.DockerSocket)
 		}
