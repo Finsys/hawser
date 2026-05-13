@@ -240,6 +240,12 @@ sudo journalctl -u hawser -f
 
 ### Docker
 
+> **Image variants:** `ghcr.io/finsys/hawser:latest` is the full image and bundles the `docker-buildx`
+> plugin, so stacks can build images on the host (`docker compose up --build`).
+> `ghcr.io/finsys/hawser:latest-slim` drops the buildx plugin (~65 MB smaller) — use it when the agent
+> only deploys pre-built images. Deploying from an image works on both; building from source does not work
+> on the slim image. Both are multi-arch (armv7 is shared between the two tags).
+
 > **Important:** If your compose stacks use relative file bind mounts (e.g., `./config.conf:/app/config.conf`),
 > you **must** use a host path bind mount for `STACKS_DIR` — not a named volume. The path inside the container
 > must match the host path, because Docker daemon resolves bind mount sources on the host filesystem.
@@ -364,7 +370,7 @@ docker run -d \
   hawser:local
 ```
 
-**Note**: The default `Dockerfile` is used by GoReleaser for release builds and expects a pre-built binary. Use `Dockerfile.dev` for building from source.
+**Note**: The default `Dockerfile` is used by GoReleaser for release builds and expects a pre-built binary. Use `Dockerfile.dev` for building from source. Both accept `--build-arg INCLUDE_BUILDX=false` to produce the slim (no buildx plugin) variant.
 
 ### Multi-architecture builds
 
@@ -514,6 +520,9 @@ Hawser includes Docker Compose support for stack operations:
 - `pull` - Pull images
 - `ps` - List services
 - `logs` - View logs
+
+> Building images on the host (`docker compose up --build`) requires the `docker-buildx` plugin, which
+> is present in the full image only — not in the `-slim` image.
 
 ### Host Metrics
 

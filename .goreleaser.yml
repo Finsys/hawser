@@ -40,12 +40,14 @@ archives:
       - scripts/hawser.service
 
 dockers:
+  # Full images (include the docker-buildx plugin)
   - image_templates:
       - "ghcr.io/finsys/hawser:{{ .Version }}-amd64"
       - "ghcr.io/finsys/hawser:latest-amd64"
     use: buildx
     build_flag_templates:
       - "--platform=linux/amd64"
+      - "--build-arg=INCLUDE_BUILDX=true"
       - "--label=org.opencontainers.image.title={{ .ProjectName }}"
       - "--label=org.opencontainers.image.version={{ .Version }}"
       - "--label=org.opencontainers.image.source={{ .GitURL }}"
@@ -59,6 +61,7 @@ dockers:
     use: buildx
     build_flag_templates:
       - "--platform=linux/arm64"
+      - "--build-arg=INCLUDE_BUILDX=true"
       - "--label=org.opencontainers.image.title={{ .ProjectName }}"
       - "--label=org.opencontainers.image.version={{ .Version }}"
       - "--label=org.opencontainers.image.source={{ .GitURL }}"
@@ -66,6 +69,37 @@ dockers:
     goarch: arm64
     dockerfile: Dockerfile
 
+  # Slim images (no docker-buildx plugin; ~65 MB smaller, deploy-only)
+  - image_templates:
+      - "ghcr.io/finsys/hawser:{{ .Version }}-slim-amd64"
+      - "ghcr.io/finsys/hawser:latest-slim-amd64"
+    use: buildx
+    build_flag_templates:
+      - "--platform=linux/amd64"
+      - "--build-arg=INCLUDE_BUILDX=false"
+      - "--label=org.opencontainers.image.title={{ .ProjectName }}"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.source={{ .GitURL }}"
+      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
+    goarch: amd64
+    dockerfile: Dockerfile
+
+  - image_templates:
+      - "ghcr.io/finsys/hawser:{{ .Version }}-slim-arm64"
+      - "ghcr.io/finsys/hawser:latest-slim-arm64"
+    use: buildx
+    build_flag_templates:
+      - "--platform=linux/arm64"
+      - "--build-arg=INCLUDE_BUILDX=false"
+      - "--label=org.opencontainers.image.title={{ .ProjectName }}"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.source={{ .GitURL }}"
+      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
+    goarch: arm64
+    dockerfile: Dockerfile
+
+  # ARMv7 (Alpine-based; Wolfi is 64-bit only and has no buildx here, so the
+  # same image backs both the regular and slim manifests)
   - image_templates:
       - "ghcr.io/finsys/hawser:{{ .Version }}-armv7"
       - "ghcr.io/finsys/hawser:latest-armv7"
@@ -81,6 +115,7 @@ dockers:
     dockerfile: Dockerfile.armv7
 
 docker_manifests:
+  # Full (default) tags
   - name_template: "ghcr.io/finsys/hawser:{{ .Version }}"
     image_templates:
       - "ghcr.io/finsys/hawser:{{ .Version }}-amd64"
@@ -91,6 +126,19 @@ docker_manifests:
     image_templates:
       - "ghcr.io/finsys/hawser:latest-amd64"
       - "ghcr.io/finsys/hawser:latest-arm64"
+      - "ghcr.io/finsys/hawser:latest-armv7"
+
+  # Slim tags (armv7 reuses the regular Alpine image)
+  - name_template: "ghcr.io/finsys/hawser:{{ .Version }}-slim"
+    image_templates:
+      - "ghcr.io/finsys/hawser:{{ .Version }}-slim-amd64"
+      - "ghcr.io/finsys/hawser:{{ .Version }}-slim-arm64"
+      - "ghcr.io/finsys/hawser:{{ .Version }}-armv7"
+
+  - name_template: "ghcr.io/finsys/hawser:latest-slim"
+    image_templates:
+      - "ghcr.io/finsys/hawser:latest-slim-amd64"
+      - "ghcr.io/finsys/hawser:latest-slim-arm64"
       - "ghcr.io/finsys/hawser:latest-armv7"
 
 checksum:

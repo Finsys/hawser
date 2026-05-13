@@ -4,6 +4,10 @@
 # =============================================================================
 # Multi-stage Dockerfile for local development that builds Hawser from source
 # and uses Wolfi OS for a secure, vulnerability-free runtime.
+#
+# Build arg INCLUDE_BUILDX=false produces a slim image without the docker-buildx
+# plugin (~65 MB smaller). The slim image can deploy and manage compose stacks
+# but cannot build images on the host (e.g. "docker compose up --build").
 # =============================================================================
 
 # -----------------------------------------------------------------------------
@@ -30,6 +34,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -trimpath -o /hawser ./cm
 FROM alpine:3.21 AS os-builder
 
 ARG TARGETARCH
+ARG INCLUDE_BUILDX=true
 
 WORKDIR /work
 
@@ -43,6 +48,7 @@ RUN apk add --no-cache curl \
 
 # Generate apko.yaml for current target architecture only
 # Note: no wget/curl - the HEALTHCHECK uses the built-in "hawser healthcheck"
+# The docker-cli-buildx package is only included when INCLUDE_BUILDX=true
 RUN APKO_ARCH=$([ "$TARGETARCH" = "arm64" ] && echo "aarch64" || echo "x86_64") \
     && printf '%s\n' \
     "contents:" \
@@ -56,11 +62,15 @@ RUN APKO_ARCH=$([ "$TARGETARCH" = "arm64" ] && echo "aarch64" || echo "x86_64") 
     "    - busybox" \
     "    - docker-cli" \
     "    - docker-compose" \
+    > apko.yaml \
+    && if [ "$INCLUDE_BUILDX" = "true" ]; then echo "    - docker-cli-buildx" >> apko.yaml; fi \
+    && printf '%s\n' \
     "entrypoint:" \
     "  command: /bin/sh -l" \
     "archs:" \
     "  - ${APKO_ARCH}" \
-    > apko.yaml
+    >> apko.yaml \
+    && cat apko.yaml
 
 # Build the OS tarball and extract rootfs
 RUN apko build apko.yaml hawser-base:latest output.tar \
