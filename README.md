@@ -387,7 +387,7 @@ The Hawser Docker image includes a built-in health check that verifies Docker co
 
 **How it works:**
 
-- The container runs `wget` against the `/_hawser/health` endpoint every 30 seconds
+- The container's `HEALTHCHECK` runs `hawser healthcheck`, which probes the `/_hawser/health` endpoint every 30 seconds (https with verification disabled when `TLS_CERT` is set). No `wget`/`curl` is shipped in the image.
 - Both modes expose a minimal HTTP server on the configured port (default: 2376) for health checks
 - The health check verifies that Hawser can communicate with the Docker daemon
 
@@ -424,7 +424,7 @@ docker run -d \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -e DOCKHAND_SERVER_URL=wss://your-dockhand.example.com/api/hawser/connect \
   -e TOKEN=your-agent-token \
-  --health-cmd="wget -q --spider http://localhost:2376/_hawser/health || exit 1" \
+  --health-cmd="/usr/local/bin/hawser healthcheck" \
   --health-interval=30s \
   --health-timeout=5s \
   --health-retries=3 \
