@@ -19,6 +19,13 @@ var (
 )
 
 func main() {
+	// "healthcheck" subcommand: used as the container HEALTHCHECK command so the
+	// image does not need wget/curl. Handled before flag parsing.
+	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
+		runHealthcheck()
+		return
+	}
+
 	// Define flags
 	showHelp := flag.Bool("help", false, "Show help message")
 	showVersion := flag.Bool("version", false, "Show version information")
@@ -107,6 +114,7 @@ func printHelp() {
 	fmt.Println("USAGE:")
 	fmt.Println("  hawser              Run in Edge mode (connects outbound to Dockhand)")
 	fmt.Println("  hawser standard     Run in Standard mode (HTTP server)")
+	fmt.Println("  hawser healthcheck  Probe the local /_hawser/health endpoint (exit 0/1)")
 	fmt.Println()
 	fmt.Println("OPTIONS:")
 	fmt.Println("  --help       Show this help message")

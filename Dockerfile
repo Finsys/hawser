@@ -6,6 +6,10 @@
 # - Full transparency (no dependency on pre-built Chainguard images)
 # - Reproducible builds from open-source Wolfi packages
 # - Minimal attack surface with only required packages
+#
+# Build arg INCLUDE_BUILDX=false produces a slim image without the docker-buildx
+# plugin (~65 MB smaller). The slim image can deploy and manage compose stacks
+# but cannot build images on the host (e.g. "docker compose up --build").
 # =============================================================================
 
 # -----------------------------------------------------------------------------
@@ -16,6 +20,7 @@
 FROM alpine:3.21 AS os-builder
 
 ARG TARGETARCH
+ARG INCLUDE_BUILDX=true
 
 WORKDIR /work
 
@@ -30,6 +35,8 @@ RUN apk add --no-cache curl \
 
 # Generate apko.yaml for current target architecture only
 # We build single-arch to avoid multi-arch layer confusion in extraction
+# Note: no wget/curl - the HEALTHCHECK uses the built-in "hawser healthcheck"
+# The docker-cli-buildx package is only included when INCLUDE_BUILDX=true
 RUN APKO_ARCH=$([ "$TARGETARCH" = "arm64" ] && echo "aarch64" || echo "x86_64") \
     && printf '%s\n' \
     "contents:" \
@@ -43,13 +50,15 @@ RUN APKO_ARCH=$([ "$TARGETARCH" = "arm64" ] && echo "aarch64" || echo "x86_64") 
     "    - busybox" \
     "    - docker-cli" \
     "    - docker-compose=5.1.4-r0" \
-    "    - docker-cli-buildx" \
-    "    - wget" \
+    > apko.yaml \
+    && if [ "$INCLUDE_BUILDX" = "true" ]; then echo "    - docker-cli-buildx" >> apko.yaml; fi \
+    && printf '%s\n' \
     "entrypoint:" \
     "  command: /bin/sh -l" \
     "archs:" \
     "  - ${APKO_ARCH}" \
-    > apko.yaml
+    >> apko.yaml \
+    && cat apko.yaml
 
 # Build the OS tarball and extract rootfs
 # apko creates an OCI tarball - we need to extract the actual filesystem layer
@@ -89,15 +98,14 @@ RUN mkdir -p /usr/libexec/docker/cli-plugins \
 VOLUME /data/stacks
 
 # Copy pre-built binary (provided by goreleaser)
-COPY hawser /usr/local/bin/hawser
-RUN chmod +x /usr/local/bin/hawser
+COPY --chmod=0755 hawser /usr/local/bin/hawser
 
 # Expose default port
 EXPOSE 2376
 
-# Health check - auto-detects TLS mode
+# Health check - uses the built-in subcommand (auto-detects TLS mode)
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
-    CMD if [ -n "$TLS_CERT" ]; then wget -q --spider --no-check-certificate https://localhost:${PORT}/_hawser/health; else wget -q --spider http://localhost:${PORT}/_hawser/health; fi || exit 1
+    CMD ["/usr/local/bin/hawser", "healthcheck"]
 
 # Run as root to access Docker socket (can be changed with --user flag)
 ENTRYPOINT ["/usr/local/bin/hawser"]
