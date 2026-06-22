@@ -17,6 +17,10 @@ type Config struct {
 	CACert            string // Optional CA certificate path (for self-signed Dockhand)
 	TLSSkipVerify     bool   // Skip TLS verification (insecure, for testing)
 
+    // Custom Proxy Authentication
+    CustomAuthHeader string // Header name, e.g., "Authorization" or "X-Authentik-Token"
+    CustomAuthToken  string // Header value, e.g., "Bearer <token>"
+	
 	// Standard Mode (passive HTTP server)
 	Port        int    // Default: 2376
 	BindAddress string // Default: 0.0.0.0 (all interfaces)
@@ -57,6 +61,10 @@ func Load() (*Config, error) {
 		Token:             os.Getenv("TOKEN"),
 		CACert:            os.Getenv("CA_CERT"),
 		TLSSkipVerify:     getEnvBool("TLS_SKIP_VERIFY", false),
+
+        // Custom Proxy Authentication
+        CustomAuthHeader: os.Getenv("CUSTOM_AUTH_HEADER"),
+        CustomAuthToken:  os.Getenv("CUSTOM_AUTH_TOKEN"),
 
 		// Standard mode
 		Port:        getEnvInt("PORT", 2376),

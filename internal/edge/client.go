@@ -199,7 +199,15 @@ func (c *Client) connect() error {
 		dialer.TLSClientConfig = tlsConfig
 	}
 
-	conn, _, err := dialer.Dial(c.cfg.DockhandServerURL, nil)
+    var headers http.Header = nil
+
+    if c.cfg.CustomAuthHeader != "" && c.cfg.CustomAuthToken != "" {
+        headers = make(http.Header)
+        headers.Add(c.cfg.CustomAuthHeader, c.cfg.CustomAuthToken)
+        log.Infof("Using custom authentication header: %s", c.cfg.CustomAuthHeader)
+    }
+
+	conn, _, err := dialer.Dial(c.cfg.DockhandServerURL, headers)
 	if err != nil {
 		return fmt.Errorf("WebSocket dial failed: %w", err)
 	}
