@@ -444,6 +444,8 @@ Hawser is configured via environment variables:
 |----------|-------------|---------|
 | `DOCKHAND_SERVER_URL` | WebSocket URL for Edge mode | - |
 | `TOKEN` | Authentication token | - |
+| `CUSTOM_AUTH_HEADER` | Name for custom auth header (e.g., `Authorization`, `X-Authentik-Token`) | - |
+| `CUSTOM_AUTH_TOKEN`  | Value for custom auth header (e.g., `Basic <token>`, `Bearer <token>`) | - |
 | `CA_CERT` | Path to CA certificate for Edge mode (self-signed Dockhand) | - |
 | `TLS_SKIP_VERIFY` | Skip TLS verification for Edge mode (insecure) | `false` |
 | `PORT` | HTTP server port (Standard mode) | `2376` |
@@ -562,6 +564,11 @@ When disabled, disk metrics will show as 0 in Dockhand (displayed as "N/A").
 ### Docker API Version Compatibility
 
 Hawser automatically negotiates the Docker API version with the daemon. When running Docker Compose operations, Hawser sets the `DOCKER_API_VERSION` environment variable to match the daemon's reported API version. This ensures compatibility when the Docker CLI version differs from the daemon version - for example, when using an older Docker CLI with a newer Docker daemon that requires a higher minimum API version.
+
+### Custom Auth Header (Edge Mode)
+
+If your Dockhand server is protected by an external authentication layer (like Traefik with ForwardAuth, Authentik, or Cloudflare Access), the Hawser agent needs to pass a custom header to authenticate and establish the WebSocket connection.
+You can use `CUSTOM_AUTH_HEADER` and `CUSTOM_AUTH_TOKEN` to inject this header into the connection request.
 
 ## API Endpoints
 
