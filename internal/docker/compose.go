@@ -19,6 +19,18 @@ import (
 // Rejects dangerous keys like LD_PRELOAD, PATH, DOCKER_HOST etc. via denylist below.
 var validEnvKeyRegex = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 
+// controlEnvKeys are Dockhand-internal control variables that drive server-side
+// secret resolution (e.g. bulk-pull selectors). Secret resolution happens
+// entirely on the Dockhand server, and these selectors should already be removed
+// from envVars before a deploy request reaches the agent. The agent strips them
+// defensively so they can never be injected into the compose process or leak into
+// a container if the server ever fails to remove them. Unlike deniedEnvKeys these
+// are stripped silently rather than failing the deploy.
+var controlEnvKeys = map[string]bool{
+	"DOCKHAND_SECRET_SELECTOR": true,
+	"OP_ENVIRONMENT_ID":        true,
+}
+
 // deniedEnvKeys are environment variable names that could be used for code execution
 // or to redirect Docker operations to an attacker-controlled endpoint.
 var deniedEnvKeys = map[string]bool{
@@ -54,6 +66,37 @@ func NewComposeClient(dockerSocket, stacksDir string) *ComposeClient {
 		dockerSocket: dockerSocket,
 		stacksDir:    stacksDir,
 	}
+}
+
+// buildComposeEnv validates and filters the caller-supplied environment variables
+// for a compose invocation and returns the "KEY=VALUE" entries to append to the
+// command environment. Resolved secrets arrive here (merged into envVars by
+// Dockhand) and are injected via the process environment only; values are never
+// logged. Invalid key names fail the operation; Dockhand control/selector
+// variables and dangerous keys are filtered out silently/with a warning and are
+// never returned.
+func buildComposeEnv(envVars map[string]string) ([]string, error) {
+	entries := make([]string, 0, len(envVars))
+	for key, value := range envVars {
+		// Validate env var key format (alphanumeric + underscore only)
+		if !validEnvKeyRegex.MatchString(key) {
+			return nil, fmt.Errorf("Invalid environment variable name: %q", key)
+		}
+		// Strip Dockhand control/selector variables so they never reach the
+		// compose process or leak into containers (defense in depth; the server
+		// resolves and removes these before dispatch).
+		if controlEnvKeys[strings.ToUpper(key)] {
+			log.Debugf("Compose: Stripping control variable from compose env: %s", key)
+			continue
+		}
+		// Block dangerous env vars that could enable code execution or redirect Docker
+		if deniedEnvKeys[strings.ToUpper(key)] {
+			log.Warnf("Compose: Blocked dangerous environment variable: %s", key)
+			continue
+		}
+		entries = append(entries, fmt.Sprintf("%s=%s", key, value))
+	}
+	return entries, nil
 }
 
 // SetAPIVersion sets the Docker API version to use for compose commands.
@@ -462,23 +505,19 @@ func (c *ComposeClient) Execute(ctx context.Context, op *ComposeOperation) (*Com
 		log.Debugf("Compose: Using API version %s", c.apiVersion)
 	}
 
-	// Add environment variables for compose variable substitution
-	for key, value := range op.EnvVars {
-		// Validate env var key format (alphanumeric + underscore only)
-		if !validEnvKeyRegex.MatchString(key) {
-			return &ComposeResult{
-				Success:  false,
-				Error:    fmt.Sprintf("Invalid environment variable name: %q", key),
-				ExitCode: 1,
-			}, nil
-		}
-		// Block dangerous env vars that could enable code execution or redirect Docker
-		if deniedEnvKeys[strings.ToUpper(key)] {
-			log.Warnf("Compose: Blocked dangerous environment variable: %s", key)
-			continue
-		}
-		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", key, value))
+	// Add environment variables for compose variable substitution.
+	// These include resolved secrets (secretVars merged into envVars by Dockhand):
+	// they are injected into the compose process environment only and are never
+	// logged or written to disk here. Only key names are ever logged, not values.
+	envEntries, envErr := buildComposeEnv(op.EnvVars)
+	if envErr != nil {
+		return &ComposeResult{
+			Success:  false,
+			Error:    envErr.Error(),
+			ExitCode: 1,
+		}, nil
 	}
+	cmd.Env = append(cmd.Env, envEntries...)
 
 	// Log the command being executed
 	log.Debugf("Compose: %s %s (project=%s)", c.composeCmd, strings.Join(fullArgs, " "), op.ProjectName)

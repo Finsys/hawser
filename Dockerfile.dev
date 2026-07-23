@@ -89,9 +89,10 @@ ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     RECONNECT_DELAY=1 \
     MAX_RECONNECT_DELAY=60
 
-# Create docker compose plugin symlink
+# Create docker compose plugin symlink.
+# Use ln -sf because newer docker-compose packages already ship this symlink.
 RUN mkdir -p /usr/libexec/docker/cli-plugins \
-    && ln -s /usr/bin/docker-compose /usr/libexec/docker/cli-plugins/docker-compose
+    && ln -sf /usr/bin/docker-compose /usr/libexec/docker/cli-plugins/docker-compose
 
 # Copy binary from builder
 COPY --from=builder /hawser /usr/local/bin/hawser
