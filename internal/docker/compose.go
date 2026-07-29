@@ -22,20 +22,20 @@ var validEnvKeyRegex = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 // deniedEnvKeys are environment variable names that could be used for code execution
 // or to redirect Docker operations to an attacker-controlled endpoint.
 var deniedEnvKeys = map[string]bool{
-	"LD_PRELOAD":      true,
-	"LD_LIBRARY_PATH": true,
-	"PATH":            true,
-	"DOCKER_HOST":     true,
-	"DOCKER_CONFIG":   true,
-	"DOCKER_CERT_PATH": true,
+	"LD_PRELOAD":        true,
+	"LD_LIBRARY_PATH":   true,
+	"PATH":              true,
+	"DOCKER_HOST":       true,
+	"DOCKER_CONFIG":     true,
+	"DOCKER_CERT_PATH":  true,
 	"DOCKER_TLS_VERIFY": true,
-	"DOCKER_CONTEXT":  true,
-	"HOME":            true,
-	"SHELL":           true,
-	"BASH_ENV":        true,
-	"ENV":             true,
-	"CDPATH":          true,
-	"IFS":             true,
+	"DOCKER_CONTEXT":    true,
+	"HOME":              true,
+	"SHELL":             true,
+	"BASH_ENV":          true,
+	"ENV":               true,
+	"CDPATH":            true,
+	"IFS":               true,
 }
 
 // ComposeClient handles Docker Compose operations
@@ -101,24 +101,25 @@ type RegistryCredentials struct {
 
 // ComposeOperation represents a compose operation request
 type ComposeOperation struct {
-	Operation       string                `json:"operation"` // up, down, pull, ps, logs
-	ProjectName     string                `json:"projectName"`
-	WorkDir         string                `json:"workDir"`
-	ComposeFile     string                `json:"composeFile,omitempty"`     // Content of compose file
-	ComposeFileName string                `json:"composeFileName,omitempty"` // Explicit compose filename to use (e.g., "docker-compose.prod.yml")
-	Files           map[string]string     `json:"files,omitempty"`           // All files to write (relative path -> content)
-	Services        []string              `json:"services,omitempty"`        // Specific services to operate on
-	Options         map[string]string     `json:"options,omitempty"`         // Additional options
-	EnvVars         map[string]string     `json:"envVars,omitempty"`         // Environment variables for variable substitution
-	Registries      []RegistryCredentials `json:"registries,omitempty"`      // Registry credentials for docker login
-	ForceRecreate   bool                  `json:"forceRecreate,omitempty"`   // Force recreation of containers (--force-recreate)
-	RemoveVolumes   bool                  `json:"removeVolumes,omitempty"`   // Remove volumes on down (--volumes)
-	ServiceName     string                `json:"serviceName,omitempty"`     // Target specific service only (with --no-deps)
-	Build           bool                  `json:"build,omitempty"`           // Build images before starting (--build)
-	NoBuildCache    bool                  `json:"noBuildCache,omitempty"`    // Build without cache (--no-cache)
-	PullPolicy      string                `json:"pullPolicy,omitempty"`      // Pull policy: 'always' | 'missing' | 'never'
-	FilesToDelete   []FileToDelete        `json:"filesToDelete,omitempty"`   // Git deletion sync (#966): hash-verified file removals
-	RemoveFiles     bool                  `json:"removeFiles,omitempty"`     // On down: remove the stack directory entirely (#1162, stack deletion only)
+	Operation        string                `json:"operation"` // up, down, pull, ps, logs
+	ProjectName      string                `json:"projectName"`
+	WorkDir          string                `json:"workDir"`
+	ComposeFile      string                `json:"composeFile,omitempty"`      // Content of compose file
+	ComposeFileName  string                `json:"composeFileName,omitempty"`  // Explicit compose filename (single -f; e.g. "docker-compose.prod.yml")
+	ComposeFileNames []string              `json:"composeFileNames,omitempty"` // Ordered compose filenames for multi -f (Dockhand multi-file / overrides)
+	Files            map[string]string     `json:"files,omitempty"`            // All files to write (relative path -> content)
+	Services         []string              `json:"services,omitempty"`         // Specific services to operate on
+	Options          map[string]string     `json:"options,omitempty"`          // Additional options
+	EnvVars          map[string]string     `json:"envVars,omitempty"`          // Environment variables for variable substitution
+	Registries       []RegistryCredentials `json:"registries,omitempty"`       // Registry credentials for docker login
+	ForceRecreate    bool                  `json:"forceRecreate,omitempty"`    // Force recreation of containers (--force-recreate)
+	RemoveVolumes    bool                  `json:"removeVolumes,omitempty"`    // Remove volumes on down (--volumes)
+	ServiceName      string                `json:"serviceName,omitempty"`      // Target specific service only (with --no-deps)
+	Build            bool                  `json:"build,omitempty"`            // Build images before starting (--build)
+	NoBuildCache     bool                  `json:"noBuildCache,omitempty"`     // Build without cache (--no-cache)
+	PullPolicy       string                `json:"pullPolicy,omitempty"`       // Pull policy: 'always' | 'missing' | 'never'
+	FilesToDelete    []FileToDelete        `json:"filesToDelete,omitempty"`    // Git deletion sync (#966): hash-verified file removals
+	RemoveFiles      bool                  `json:"removeFiles,omitempty"`      // On down: remove the stack directory entirely (#1162, stack deletion only)
 }
 
 // ComposeResult is the result of a compose operation
@@ -131,6 +132,80 @@ type ComposeResult struct {
 	// exactly one of these — Dockhand uses their presence to detect support.
 	DeletedFiles []string      `json:"deletedFiles,omitempty"`
 	SkippedFiles []SkippedFile `json:"skippedFiles,omitempty"`
+}
+
+// composeFileAbsPath joins stackDir with a relative compose path after validating
+// it cannot escape the stack directory. Returns absolute path or an error message.
+func composeFileAbsPath(stackDir, relPath string) (string, string) {
+	if !isSafeRelPath(relPath) {
+		return "", fmt.Sprintf("Invalid compose file path: %q", relPath)
+	}
+	absPath, err := filepath.Abs(filepath.Join(stackDir, filepath.FromSlash(relPath)))
+	if err != nil {
+		return "", fmt.Sprintf("Failed to resolve compose file path %q: %v", relPath, err)
+	}
+	if !strings.HasPrefix(absPath, stackDir+string(os.PathSeparator)) && absPath != stackDir {
+		return "", fmt.Sprintf("Path traversal rejected: %s escapes stack directory", relPath)
+	}
+	return absPath, ""
+}
+
+// resolveComposeFileFlags builds ordered docker compose -f flag pairs for a stack.
+//
+// Precedence:
+//  1. ComposeFileNames — multi-file / override list from Dockhand (multiple -f)
+//  2. ComposeFileName — single explicit file (backward compatible)
+//  3. Auto-detect standard filenames present in Files
+//  4. ComposeFile content — caller writes docker-compose.yml (fallbackPath set)
+//
+// Returns (flagPairs, fallbackWritePath, errMsg). When fallbackWritePath is non-empty,
+// the caller must write op.ComposeFile there before running compose.
+func resolveComposeFileFlags(stackDir string, op *ComposeOperation) (flags []string, fallbackPath string, errMsg string) {
+	appendFile := func(rel string) string {
+		abs, msg := composeFileAbsPath(stackDir, rel)
+		if msg != "" {
+			return msg
+		}
+		flags = append(flags, "-f", abs)
+		log.Debugf("Compose: Using compose file: %s", rel)
+		return ""
+	}
+
+	if len(op.ComposeFileNames) > 0 {
+		for _, name := range op.ComposeFileNames {
+			if name == "" {
+				return nil, "", "composeFileNames contains an empty path"
+			}
+			if msg := appendFile(name); msg != "" {
+				return nil, "", msg
+			}
+		}
+		return flags, "", ""
+	}
+
+	if op.ComposeFileName != "" {
+		if msg := appendFile(op.ComposeFileName); msg != "" {
+			return nil, "", msg
+		}
+		return flags, "", ""
+	}
+
+	for _, name := range []string{"docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"} {
+		if _, exists := op.Files[name]; exists {
+			if msg := appendFile(name); msg != "" {
+				return nil, "", msg
+			}
+			return flags, "", ""
+		}
+	}
+
+	if op.ComposeFile != "" {
+		fallbackPath = filepath.Join(stackDir, "docker-compose.yml")
+		flags = append(flags, "-f", fallbackPath)
+		return flags, fallbackPath, ""
+	}
+
+	return nil, "", ""
 }
 
 // loginToRegistries logs into all provided registries before compose operations
@@ -291,38 +366,24 @@ func (c *ComposeClient) Execute(ctx context.Context, op *ComposeOperation) (*Com
 
 		log.Debugf("Compose: Wrote %d files to %s", len(op.Files), stackDir)
 
-		// Determine compose file name:
-		// 1. If ComposeFileName is explicitly provided, use it
-		// 2. Otherwise, auto-detect from standard filenames
-		composeFileName := ""
-		if op.ComposeFileName != "" {
-			// Explicit compose filename provided - use it directly
-			composeFileName = op.ComposeFileName
-			log.Debugf("Compose: Using explicit compose filename: %s", composeFileName)
-		} else {
-			// Auto-detect compose file from written files
-			for _, name := range []string{"docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"} {
-				if _, exists := op.Files[name]; exists {
-					composeFileName = name
-					break
-				}
-			}
+		fileFlags, fallbackPath, errMsg := resolveComposeFileFlags(stackDir, op)
+		if errMsg != "" {
+			return &ComposeResult{
+				Success:  false,
+				Error:    errMsg,
+				ExitCode: 1,
+			}, nil
 		}
-
-		if composeFileName != "" {
-			args = append(args, "-f", filepath.Join(stackDir, composeFileName))
-		} else if op.ComposeFile != "" {
-			// Fallback: write compose content to docker-compose.yml
-			composePath := filepath.Join(stackDir, "docker-compose.yml")
-			if err := os.WriteFile(composePath, []byte(op.ComposeFile), 0644); err != nil {
+		if fallbackPath != "" {
+			if err := os.WriteFile(fallbackPath, []byte(op.ComposeFile), 0644); err != nil {
 				return &ComposeResult{
 					Success:  false,
 					Error:    fmt.Sprintf("Failed to write compose file: %v", err),
 					ExitCode: 1,
 				}, nil
 			}
-			args = append(args, "-f", composePath)
 		}
+		args = append(args, fileFlags...)
 	} else if op.ComposeFile != "" {
 		// LEGACY: stdin-based approach (no files provided)
 		stdinContent = op.ComposeFile
