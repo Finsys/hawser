@@ -22,20 +22,20 @@ var validEnvKeyRegex = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 // deniedEnvKeys are environment variable names that could be used for code execution
 // or to redirect Docker operations to an attacker-controlled endpoint.
 var deniedEnvKeys = map[string]bool{
-	"LD_PRELOAD":      true,
-	"LD_LIBRARY_PATH": true,
-	"PATH":            true,
-	"DOCKER_HOST":     true,
-	"DOCKER_CONFIG":   true,
-	"DOCKER_CERT_PATH": true,
+	"LD_PRELOAD":        true,
+	"LD_LIBRARY_PATH":   true,
+	"PATH":              true,
+	"DOCKER_HOST":       true,
+	"DOCKER_CONFIG":     true,
+	"DOCKER_CERT_PATH":  true,
 	"DOCKER_TLS_VERIFY": true,
-	"DOCKER_CONTEXT":  true,
-	"HOME":            true,
-	"SHELL":           true,
-	"BASH_ENV":        true,
-	"ENV":             true,
-	"CDPATH":          true,
-	"IFS":             true,
+	"DOCKER_CONTEXT":    true,
+	"HOME":              true,
+	"SHELL":             true,
+	"BASH_ENV":          true,
+	"ENV":               true,
+	"CDPATH":            true,
+	"IFS":               true,
 }
 
 // ComposeClient handles Docker Compose operations
@@ -101,24 +101,25 @@ type RegistryCredentials struct {
 
 // ComposeOperation represents a compose operation request
 type ComposeOperation struct {
-	Operation       string                `json:"operation"` // up, down, pull, ps, logs
-	ProjectName     string                `json:"projectName"`
-	WorkDir         string                `json:"workDir"`
-	ComposeFile     string                `json:"composeFile,omitempty"`     // Content of compose file
-	ComposeFileName string                `json:"composeFileName,omitempty"` // Explicit compose filename to use (e.g., "docker-compose.prod.yml")
-	Files           map[string]string     `json:"files,omitempty"`           // All files to write (relative path -> content)
-	Services        []string              `json:"services,omitempty"`        // Specific services to operate on
-	Options         map[string]string     `json:"options,omitempty"`         // Additional options
-	EnvVars         map[string]string     `json:"envVars,omitempty"`         // Environment variables for variable substitution
-	Registries      []RegistryCredentials `json:"registries,omitempty"`      // Registry credentials for docker login
-	ForceRecreate   bool                  `json:"forceRecreate,omitempty"`   // Force recreation of containers (--force-recreate)
-	RemoveVolumes   bool                  `json:"removeVolumes,omitempty"`   // Remove volumes on down (--volumes)
-	ServiceName     string                `json:"serviceName,omitempty"`     // Target specific service only (with --no-deps)
-	Build           bool                  `json:"build,omitempty"`           // Build images before starting (--build)
-	NoBuildCache    bool                  `json:"noBuildCache,omitempty"`    // Build without cache (--no-cache)
-	PullPolicy      string                `json:"pullPolicy,omitempty"`      // Pull policy: 'always' | 'missing' | 'never'
-	FilesToDelete   []FileToDelete        `json:"filesToDelete,omitempty"`   // Git deletion sync (#966): hash-verified file removals
-	RemoveFiles     bool                  `json:"removeFiles,omitempty"`     // On down: remove the stack directory entirely (#1162, stack deletion only)
+	Operation        string                `json:"operation"` // up, down, pull, ps, logs
+	ProjectName      string                `json:"projectName"`
+	WorkDir          string                `json:"workDir"`
+	ComposeFile      string                `json:"composeFile,omitempty"`      // Content of compose file
+	ComposeFileName  string                `json:"composeFileName,omitempty"`  // Explicit compose filename (single -f; e.g. "docker-compose.prod.yml")
+	ComposeFileNames []string              `json:"composeFileNames,omitempty"` // Ordered compose filenames for multi -f (Dockhand multi-file / overrides)
+	Files            map[string]string     `json:"files,omitempty"`            // All files to write (relative path -> content)
+	Services         []string              `json:"services,omitempty"`         // Specific services to operate on
+	Options          map[string]string     `json:"options,omitempty"`          // Additional options
+	EnvVars          map[string]string     `json:"envVars,omitempty"`          // Environment variables for variable substitution
+	Registries       []RegistryCredentials `json:"registries,omitempty"`       // Registry credentials for docker login
+	ForceRecreate    bool                  `json:"forceRecreate,omitempty"`    // Force recreation of containers (--force-recreate)
+	RemoveVolumes    bool                  `json:"removeVolumes,omitempty"`    // Remove volumes on down (--volumes)
+	ServiceName      string                `json:"serviceName,omitempty"`      // Target specific service only (with --no-deps)
+	Build            bool                  `json:"build,omitempty"`            // Build images before starting (--build)
+	NoBuildCache     bool                  `json:"noBuildCache,omitempty"`     // Build without cache (--no-cache)
+	PullPolicy       string                `json:"pullPolicy,omitempty"`       // Pull policy: 'always' | 'missing' | 'never'
+	FilesToDelete    []FileToDelete        `json:"filesToDelete,omitempty"`    // Git deletion sync (#966): hash-verified file removals
+	RemoveFiles      bool                  `json:"removeFiles,omitempty"`      // On down: remove the stack directory entirely (#1162, stack deletion only)
 }
 
 // ComposeResult is the result of a compose operation
@@ -131,6 +132,210 @@ type ComposeResult struct {
 	// exactly one of these — Dockhand uses their presence to detect support.
 	DeletedFiles []string      `json:"deletedFiles,omitempty"`
 	SkippedFiles []SkippedFile `json:"skippedFiles,omitempty"`
+}
+
+// Filenames Compose auto-discovers from cwd when no -f is passed.
+var standardComposeBasenames = map[string]bool{
+	"compose.yaml":        true,
+	"compose.yml":         true,
+	"docker-compose.yaml": true,
+	"docker-compose.yml":  true,
+}
+
+// Matches historical Hawser auto-detect order (docker-compose.yml first).
+var standardComposeSearchOrder = []string{
+	"docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml",
+}
+
+// composeFileAbsPath joins stackDir with a relative compose path after validating
+// it cannot escape the stack directory. Returns absolute path or an error message.
+func composeFileAbsPath(stackDir, relPath string) (string, string) {
+	if !isSafeRelPath(relPath) {
+		return "", fmt.Sprintf("Invalid compose file path: %q", relPath)
+	}
+	root, err := filepath.Abs(stackDir)
+	if err != nil {
+		return "", fmt.Sprintf("Failed to resolve stack directory: %v", err)
+	}
+	root, err = filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", fmt.Sprintf("Failed to resolve stack directory: %v", err)
+	}
+	absPath, err := filepath.Abs(filepath.Join(stackDir, filepath.FromSlash(relPath)))
+	if err != nil {
+		return "", fmt.Sprintf("Failed to resolve compose file path %q: %v", relPath, err)
+	}
+
+	// Resolve the deepest existing component, then append the not-yet-created
+	// suffix. This rejects symlinked files and parent directories that point out
+	// of the stack while still allowing new nested files.
+	probe := absPath
+	var missing []string
+	for {
+		resolved, resolveErr := filepath.EvalSymlinks(probe)
+		if resolveErr == nil {
+			for i := len(missing) - 1; i >= 0; i-- {
+				resolved = filepath.Join(resolved, missing[i])
+			}
+			if resolved != root && !strings.HasPrefix(resolved, root+string(os.PathSeparator)) {
+				return "", fmt.Sprintf("Path traversal rejected: %s escapes stack directory", relPath)
+			}
+			return absPath, ""
+		}
+		if !os.IsNotExist(resolveErr) {
+			return "", fmt.Sprintf("Failed to resolve compose file path %q: %v", relPath, resolveErr)
+		}
+		parent := filepath.Dir(probe)
+		if parent == probe {
+			return "", fmt.Sprintf("Failed to resolve compose file path %q", relPath)
+		}
+		missing = append(missing, filepath.Base(probe))
+		probe = parent
+	}
+}
+
+// shouldUseExplicitFFlags is true whenever Compose would not uniquely select
+// relPaths[0] by auto-discovery from cwd. Named files from Dockhand always
+// pass forceF instead: a selected docker-compose.yml must not lose to a
+// sibling compose.yaml.
+func shouldUseExplicitFFlags(relPaths []string) bool {
+	if len(relPaths) == 0 {
+		return false
+	}
+	if len(relPaths) > 1 {
+		return true
+	}
+	rel := filepath.ToSlash(relPaths[0])
+	if strings.Contains(rel, "/") {
+		return true
+	}
+	return !standardComposeBasenames[rel]
+}
+
+func autoDetectTopLevelComposeRel(files map[string]string) string {
+	for _, name := range standardComposeSearchOrder {
+		if _, ok := files[name]; ok {
+			return name
+		}
+	}
+	return ""
+}
+
+func autoDetectNestedComposeRel(files map[string]string) string {
+	byBase := make(map[string][]string)
+	for key := range files {
+		if !strings.Contains(key, "/") {
+			continue
+		}
+		base := filepath.Base(key)
+		if standardComposeBasenames[base] {
+			byBase[base] = append(byBase[base], key)
+		}
+	}
+	for _, name := range standardComposeSearchOrder {
+		if matches := byBase[name]; len(matches) == 1 {
+			return matches[0]
+		}
+	}
+	return ""
+}
+
+func countTopLevelStandardComposeFiles(files map[string]string) int {
+	count := 0
+	for name := range files {
+		if !strings.Contains(name, "/") && standardComposeBasenames[name] {
+			count++
+		}
+	}
+	return count
+}
+
+func flagsFromRelPaths(stackDir string, rels []string, forceF bool) (flags []string, errMsg string) {
+	if !forceF && !shouldUseExplicitFFlags(rels) {
+		return nil, ""
+	}
+	for _, rel := range rels {
+		abs, msg := composeFileAbsPath(stackDir, rel)
+		if msg != "" {
+			return nil, msg
+		}
+		flags = append(flags, "-f", abs)
+		log.Debugf("Compose: Using compose file: %s", rel)
+	}
+	return flags, ""
+}
+
+// composeProjectDir is the directory of the primary compose file (stack root
+// when the primary lives at the top level). cwd and --env-file are anchored
+// here so nested stacks match Dockhand's local composeFileDir semantics.
+func composeProjectDir(stackDir string, rels []string) string {
+	if stackDir == "" {
+		return ""
+	}
+	if len(rels) == 0 {
+		return stackDir
+	}
+	dir := filepath.ToSlash(filepath.Dir(filepath.FromSlash(rels[0])))
+	if dir == "." || dir == "" {
+		return stackDir
+	}
+	return filepath.Join(stackDir, filepath.FromSlash(dir))
+}
+
+func hasNamedComposeFiles(op *ComposeOperation) bool {
+	return op != nil && (len(op.ComposeFileNames) > 0 || op.ComposeFileName != "")
+}
+
+// resolveComposeFileFlags builds ordered docker compose -f flag pairs for a stack.
+//
+// Precedence:
+//  1. ComposeFileNames — authoritative ordered list from Dockhand (always -f)
+//  2. ComposeFileName — single explicit file (always -f)
+//  3. Auto-detect top-level standard filenames present in Files
+//  4. ComposeFile content — caller writes docker-compose.yml (fallbackPath set)
+//  5. Auto-detect a unique nested standard filename when ComposeFile is empty
+//
+// Dockhand already resolves overrides into ComposeFileNames. Hawser does not
+// re-discover override files from the agent disk. Auto-detect of a single
+// standard file at the stack root omits -f so Compose's own discovery applies.
+// Explicit names always pass -f so a selected docker-compose.yml cannot lose
+// to a sibling compose.yaml.
+//
+// Returns (flagPairs, fallbackWritePath, rels, errMsg). When fallbackWritePath
+// is non-empty, the caller must write op.ComposeFile there before running compose.
+func resolveComposeFileFlags(stackDir string, op *ComposeOperation) (flags []string, fallbackPath string, rels []string, errMsg string) {
+	forceF := false
+
+	if len(op.ComposeFileNames) > 0 {
+		for _, name := range op.ComposeFileNames {
+			if name == "" {
+				return nil, "", nil, "composeFileNames contains an empty path"
+			}
+			rels = append(rels, name)
+		}
+		forceF = true
+	} else if op.ComposeFileName != "" {
+		rels = []string{op.ComposeFileName}
+		forceF = true
+	} else if detected := autoDetectTopLevelComposeRel(op.Files); detected != "" {
+		rels = []string{detected}
+		forceF = countTopLevelStandardComposeFiles(op.Files) > 1
+	} else if op.ComposeFile != "" {
+		fallbackPath, errMsg = composeFileAbsPath(stackDir, "docker-compose.yml")
+		if errMsg != "" {
+			return nil, "", nil, errMsg
+		}
+		rels = []string{"docker-compose.yml"}
+		forceF = true
+	} else if detected := autoDetectNestedComposeRel(op.Files); detected != "" {
+		rels = []string{detected}
+	}
+
+	flags, errMsg = flagsFromRelPaths(stackDir, rels, forceF)
+	if errMsg != "" {
+		return nil, "", nil, errMsg
+	}
+	return flags, fallbackPath, rels, ""
 }
 
 // loginToRegistries logs into all provided registries before compose operations
@@ -205,9 +410,10 @@ func (c *ComposeClient) Execute(ctx context.Context, op *ComposeOperation) (*Com
 	// Determine if we should use file-based approach or stdin
 	var stdinContent string
 	var stackDir string
+	useDiskCompose := false
 
 	if len(op.Files) > 0 && c.stacksDir != "" {
-		// NEW: File-based approach - write all files to stack directory
+		// File-based approach - write all files to stack directory
 		stackDir = filepath.Join(c.stacksDir, op.ProjectName)
 
 		// Resolve stackDir to absolute path for path traversal validation
@@ -229,24 +435,21 @@ func (c *ComposeClient) Execute(ctx context.Context, op *ComposeOperation) (*Com
 				ExitCode: 1,
 			}, nil
 		}
+		if stackDir, err = filepath.EvalSymlinks(stackDir); err != nil {
+			return &ComposeResult{
+				Success:  false,
+				Error:    fmt.Sprintf("Failed to resolve stack directory: %v", err),
+				ExitCode: 1,
+			}, nil
+		}
 
 		// Write all files
 		for relPath, content := range op.Files {
-			filePath := filepath.Join(stackDir, relPath)
-
-			// Path traversal protection: ensure resolved path stays within stackDir
-			absFilePath, err := filepath.Abs(filePath)
-			if err != nil {
+			absFilePath, pathErr := composeFileAbsPath(stackDir, relPath)
+			if pathErr != "" {
 				return &ComposeResult{
 					Success:  false,
-					Error:    fmt.Sprintf("Failed to resolve path for %s: %v", relPath, err),
-					ExitCode: 1,
-				}, nil
-			}
-			if !strings.HasPrefix(absFilePath, stackDir+string(os.PathSeparator)) && absFilePath != stackDir {
-				return &ComposeResult{
-					Success:  false,
-					Error:    fmt.Sprintf("Path traversal rejected: %s escapes stack directory", relPath),
+					Error:    pathErr,
 					ExitCode: 1,
 				}, nil
 			}
@@ -290,39 +493,28 @@ func (c *ComposeClient) Execute(ctx context.Context, op *ComposeOperation) (*Com
 		}
 
 		log.Debugf("Compose: Wrote %d files to %s", len(op.Files), stackDir)
-
-		// Determine compose file name:
-		// 1. If ComposeFileName is explicitly provided, use it
-		// 2. Otherwise, auto-detect from standard filenames
-		composeFileName := ""
-		if op.ComposeFileName != "" {
-			// Explicit compose filename provided - use it directly
-			composeFileName = op.ComposeFileName
-			log.Debugf("Compose: Using explicit compose filename: %s", composeFileName)
-		} else {
-			// Auto-detect compose file from written files
-			for _, name := range []string{"docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"} {
-				if _, exists := op.Files[name]; exists {
-					composeFileName = name
-					break
-				}
-			}
+		useDiskCompose = true
+	} else if hasNamedComposeFiles(op) && c.stacksDir != "" && op.ProjectName != "" {
+		// Named compose files are authoritative even when a legacy ComposeFile
+		// payload is also present. Resolve them against the existing stack dir.
+		absStackDir, err := filepath.Abs(filepath.Join(c.stacksDir, op.ProjectName))
+		if err != nil {
+			return &ComposeResult{
+				Success:  false,
+				Error:    fmt.Sprintf("Failed to resolve stack directory: %v", err),
+				ExitCode: 1,
+			}, nil
 		}
-
-		if composeFileName != "" {
-			args = append(args, "-f", filepath.Join(stackDir, composeFileName))
-		} else if op.ComposeFile != "" {
-			// Fallback: write compose content to docker-compose.yml
-			composePath := filepath.Join(stackDir, "docker-compose.yml")
-			if err := os.WriteFile(composePath, []byte(op.ComposeFile), 0644); err != nil {
-				return &ComposeResult{
-					Success:  false,
-					Error:    fmt.Sprintf("Failed to write compose file: %v", err),
-					ExitCode: 1,
-				}, nil
-			}
-			args = append(args, "-f", composePath)
+		stackDir = absStackDir
+		stackDir, err = filepath.EvalSymlinks(stackDir)
+		if err != nil {
+			return &ComposeResult{
+				Success:  false,
+				Error:    fmt.Sprintf("Failed to resolve stack directory: %v", err),
+				ExitCode: 1,
+			}, nil
 		}
+		useDiskCompose = true
 	} else if op.ComposeFile != "" {
 		// LEGACY: stdin-based approach (no files provided)
 		stdinContent = op.ComposeFile
@@ -330,9 +522,11 @@ func (c *ComposeClient) Execute(ctx context.Context, op *ComposeOperation) (*Com
 	}
 
 	// Git deletion sync (#966): remove files that were deleted from the git
-	// repository. Runs before compose up so removed config files are not
-	// mounted. Every entry is hash-verified and containment-checked by the
-	// applier — user data and locally modified files are never touched.
+	// repository. Runs after writes and before -f resolution so a deleted
+	// compose/override is not still selected, and before compose up so
+	// removed config files are not mounted. Every entry is hash-verified
+	// and containment-checked by the applier — user data and locally
+	// modified files are never touched.
 	var deletedFiles []string
 	var skippedFiles []SkippedFile
 	if op.Operation == "up" && len(op.FilesToDelete) > 0 {
@@ -352,16 +546,48 @@ func (c *ComposeClient) Execute(ctx context.Context, op *ComposeOperation) (*Com
 		}
 	}
 
-	// Add env files from the stack directory.
-	// Order matters: .env first (base repo values), .env.dockhand second (user overrides).
-	// Later --env-file entries override earlier ones in Docker Compose.
-	if stackDir != "" {
-		envPath := filepath.Join(stackDir, ".env")
+	var composeRels []string
+	if useDiskCompose && stackDir != "" {
+		fileFlags, fallbackPath, rels, errMsg := resolveComposeFileFlags(stackDir, op)
+		if errMsg != "" {
+			return &ComposeResult{
+				Success:  false,
+				Error:    errMsg,
+				ExitCode: 1,
+			}, nil
+		}
+		composeRels = rels
+		if fallbackPath != "" {
+			if err := os.MkdirAll(stackDir, 0755); err != nil {
+				return &ComposeResult{
+					Success:  false,
+					Error:    fmt.Sprintf("Failed to create stack directory %s: %v. Ensure STACKS_DIR points to a writable path.", stackDir, err),
+					ExitCode: 1,
+				}, nil
+			}
+			if err := os.WriteFile(fallbackPath, []byte(op.ComposeFile), 0644); err != nil {
+				return &ComposeResult{
+					Success:  false,
+					Error:    fmt.Sprintf("Failed to write compose file: %v", err),
+					ExitCode: 1,
+				}, nil
+			}
+		}
+		args = append(args, fileFlags...)
+	}
+
+	workDir := composeProjectDir(stackDir, composeRels)
+
+	// Add env files next to the primary compose file (not always the stack
+	// root). Order: .env first (base repo values), .env.dockhand second
+	// (user overrides). Later --env-file entries override earlier ones.
+	if workDir != "" {
+		envPath := filepath.Join(workDir, ".env")
 		if _, err := os.Stat(envPath); err == nil {
 			args = append(args, "--env-file", envPath)
 			log.Debugf("Compose: Adding --env-file %s", envPath)
 		}
-		envDockhandPath := filepath.Join(stackDir, ".env.dockhand")
+		envDockhandPath := filepath.Join(workDir, ".env.dockhand")
 		if _, err := os.Stat(envDockhandPath); err == nil {
 			args = append(args, "--env-file", envDockhandPath)
 			log.Debugf("Compose: Adding --env-file %s", envDockhandPath)
@@ -438,9 +664,9 @@ func (c *ComposeClient) Execute(ctx context.Context, op *ComposeOperation) (*Com
 	// Execute compose command
 	cmd := exec.CommandContext(ctx, c.composeCmd, fullArgs...)
 
-	// Set working directory (use stackDir if files were written, otherwise use WorkDir)
-	if stackDir != "" {
-		cmd.Dir = stackDir
+	// Set working directory (primary compose file dir when using disk files)
+	if workDir != "" {
+		cmd.Dir = workDir
 	} else if op.WorkDir != "" {
 		cmd.Dir = op.WorkDir
 	}

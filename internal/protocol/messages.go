@@ -34,11 +34,12 @@ const (
 
 // Agent capabilities
 const (
-	CapabilityCompose       = "compose"         // Docker Compose support
-	CapabilityExec          = "exec"            // Interactive exec support
-	CapabilityMetrics       = "metrics"         // Host metrics collection
-	CapabilityEvents        = "events"          // Docker event streaming
-	CapabilityGitSyncDelete = "git-sync-delete" // Git deletion sync: hash-verified file removals (#966)
+	CapabilityCompose          = "compose"            // Docker Compose support
+	CapabilityExec             = "exec"               // Interactive exec support
+	CapabilityMetrics          = "metrics"            // Host metrics collection
+	CapabilityEvents           = "events"             // Docker event streaming
+	CapabilityGitSyncDelete    = "git-sync-delete"    // Git deletion sync: hash-verified file removals (#966)
+	CapabilityComposeFileNames = "compose-file-names" // Ordered multi-file compose (-f) via ComposeFileNames
 )
 
 // BaseMessage is the common structure for all messages
@@ -49,8 +50,8 @@ type BaseMessage struct {
 // HelloMessage is sent by agent on connect
 type HelloMessage struct {
 	Type          string   `json:"type"`
-	Version       string   `json:"version"`         // Hawser agent version
-	Protocol      string   `json:"protocol"`        // Protocol version for compatibility
+	Version       string   `json:"version"`  // Hawser agent version
+	Protocol      string   `json:"protocol"` // Protocol version for compatibility
 	AgentID       string   `json:"agentId"`
 	AgentName     string   `json:"agentName"`
 	Token         string   `json:"token"`
@@ -101,8 +102,8 @@ type ResponseMessage struct {
 	RequestID  string            `json:"requestId"`
 	StatusCode int               `json:"statusCode"`
 	Headers    map[string]string `json:"headers,omitempty"`
-	Body       string            `json:"body,omitempty"`       // Base64-encoded for binary, plain string for JSON
-	IsBinary   bool              `json:"isBinary,omitempty"`   // True if Body is base64-encoded binary data
+	Body       string            `json:"body,omitempty"`     // Base64-encoded for binary, plain string for JSON
+	IsBinary   bool              `json:"isBinary,omitempty"` // True if Body is base64-encoded binary data
 }
 
 // NewResponseMessage creates a new response message

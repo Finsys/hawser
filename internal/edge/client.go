@@ -240,6 +240,9 @@ func (c *Client) sendHello() error {
 	capabilities := []string{protocol.CapabilityExec, protocol.CapabilityMetrics, protocol.CapabilityEvents, protocol.CapabilityGitSyncDelete}
 	if c.compose.IsAvailable() {
 		capabilities = append(capabilities, protocol.CapabilityCompose)
+		// Ordered multi-file compose is compiled in wherever ComposeFileNames is
+		// handled, so it rides along with the compose capability.
+		capabilities = append(capabilities, protocol.CapabilityComposeFileNames)
 	}
 
 	// Get hawser version from config (set at build time via ldflags)
