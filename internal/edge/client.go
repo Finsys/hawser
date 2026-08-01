@@ -261,6 +261,7 @@ func (c *Client) sendHello() error {
 		hostname,
 		hawserVersion,
 		capabilities,
+		c.cfg.StacksDir,
 	)
 
 	return c.sendJSON(hello)
@@ -462,6 +463,12 @@ func (c *Client) handleRequest(req *protocol.RequestMessage) {
 		return
 	}
 
+	// Agent info (same shape as standard mode so Dockhand can read STACKS_DIR)
+	if req.Path == "/_hawser/info" {
+		c.handleInfoRequest(ctx, req)
+		return
+	}
+
 	// Make Docker request
 	var body io.Reader
 	if len(req.Body) > 0 {
@@ -573,6 +580,34 @@ func (c *Client) handleStreamingRequest(req *protocol.RequestMessage, headers ma
 			return
 		}
 	}
+}
+
+// handleInfoRequest returns agent information (mirrors standard mode /_hawser/info)
+func (c *Client) handleInfoRequest(ctx context.Context, req *protocol.RequestMessage) {
+	version, _ := c.dockerClient.GetVersion(ctx)
+
+	dockerVersion := "unknown"
+	if version != nil {
+		dockerVersion = version.Version
+	}
+
+	hawserVersion := c.cfg.Version
+	if hawserVersion == "" {
+		hawserVersion = "dev"
+	}
+
+	respBody, _ := json.Marshal(map[string]interface{}{
+		"agentId":       c.cfg.AgentID,
+		"agentName":     c.cfg.AgentName,
+		"dockerVersion": dockerVersion,
+		"hawserVersion": hawserVersion,
+		"mode":          "edge",
+		"uptime":        getHostUptime(),
+		"stacksDir":     c.cfg.StacksDir,
+		"capabilities":  []string{"exec", "metrics", "events", "compose", "git-sync-delete"},
+	})
+
+	c.sendJSON(protocol.NewResponseMessage(req.RequestID, http.StatusOK, nil, respBody))
 }
 
 // handleComposeRequest handles Docker Compose operations
@@ -1187,4 +1222,24 @@ func (c *Client) startHealthServer() {
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Warnf("Health server error: %v", err)
 	}
+}
+
+// getHostUptime reads host uptime from /proc/uptime (Linux only)
+func getHostUptime() uint64 {
+	file, err := os.Open("/proc/uptime")
+	if err != nil {
+		return 0
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	if scanner.Scan() {
+		fields := strings.Fields(scanner.Text())
+		if len(fields) >= 1 {
+			var uptime float64
+			fmt.Sscanf(fields[0], "%f", &uptime)
+			return uint64(uptime)
+		}
+	}
+	return 0
 }
