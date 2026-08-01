@@ -58,10 +58,11 @@ type HelloMessage struct {
 	DockerVersion string   `json:"dockerVersion"`
 	Hostname      string   `json:"hostname"`
 	Capabilities  []string `json:"capabilities"`
+	StacksDir     string   `json:"stacksDir,omitempty"` // Remote STACKS_DIR where compose stacks are written
 }
 
 // NewHelloMessage creates a new hello message
-func NewHelloMessage(agentID, agentName, token, tokenHash, dockerVersion, hostname, hawserVersion string, capabilities []string) *HelloMessage {
+func NewHelloMessage(agentID, agentName, token, tokenHash, dockerVersion, hostname, hawserVersion string, capabilities []string, stacksDir string) *HelloMessage {
 	return &HelloMessage{
 		Type:          TypeHello,
 		Version:       hawserVersion,
@@ -73,6 +74,7 @@ func NewHelloMessage(agentID, agentName, token, tokenHash, dockerVersion, hostna
 		DockerVersion: dockerVersion,
 		Hostname:      hostname,
 		Capabilities:  capabilities,
+		StacksDir:     stacksDir,
 	}
 }
 
