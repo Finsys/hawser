@@ -1,0 +1,18 @@
+Template: hawser/bind_address
+Type: string
+Description: Listening address:
+ IP address on which Hawser should accept connections.
+ .
+ Leave this empty to listen on all addresses.
+
+Template: hawser/port
+Type: string
+Default: 2376
+Description: Listening TCP port:
+ TCP port on which Hawser should accept connections.
+
+Template: hawser/token
+Type: password
+Description: Authentication token:
+ Token clients must provide when connecting to Hawser. A token is required
+ when listening on a non-loopback address.

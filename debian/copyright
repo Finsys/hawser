@@ -1,0 +1,8 @@
+Format: http://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: Hawser
+Upstream-Contact: Finsys / Jarek Krochmalski <support@dockhand.pro>
+Source: https://dockhand.pro/
+
+Files: *
+Copyright: 2025-2026 Finsys / Jarek Krochmalski
+License: MIT
