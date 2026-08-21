@@ -133,8 +133,29 @@ type ComposeResult struct {
 	SkippedFiles []SkippedFile `json:"skippedFiles,omitempty"`
 }
 
-// loginToRegistries logs into all provided registries before compose operations
-func (c *ComposeClient) loginToRegistries(ctx context.Context, registries []RegistryCredentials) {
+// dockerEnv builds a minimal, clean environment for invoking the docker CLI,
+// so host vars (DOCKER_CONTEXT, DOCKER_TLS_VERIFY, ...) can't redirect docker.
+// dockerConfigDir, when set, is where credentials are read from / written to.
+func (c *ComposeClient) dockerEnv(dockerConfigDir string) []string {
+	env := []string{fmt.Sprintf("DOCKER_HOST=unix://%s", c.dockerSocket)}
+	if dockerConfigDir != "" {
+		env = append(env, "DOCKER_CONFIG="+dockerConfigDir)
+	}
+	for _, key := range []string{"PATH", "HOME", "USER"} {
+		if val, ok := os.LookupEnv(key); ok {
+			env = append(env, key+"="+val)
+		}
+	}
+	if c.apiVersion != "" {
+		env = append(env, "DOCKER_API_VERSION="+c.apiVersion)
+	}
+	return env
+}
+
+// loginToRegistries runs `docker login` for each registry before a compose
+// up/pull. dockerConfigDir is the writable Docker config the credentials are
+// stored in; it must match the one passed to the compose command (see Execute).
+func (c *ComposeClient) loginToRegistries(ctx context.Context, registries []RegistryCredentials, dockerConfigDir string) {
 	if len(registries) == 0 {
 		return
 	}
@@ -164,14 +185,16 @@ func (c *ComposeClient) loginToRegistries(ctx context.Context, registries []Regi
 		log.Debugf("Compose: Logging into registry %s", registryHost)
 
 		cmd := exec.CommandContext(ctx, "docker", "login", "-u", reg.Username, "--password-stdin", registryHost)
-		cmd.Env = append(os.Environ(), fmt.Sprintf("DOCKER_HOST=unix://%s", c.dockerSocket))
+		cmd.Env = c.dockerEnv(dockerConfigDir)
 		cmd.Stdin = strings.NewReader(reg.Password)
 
 		var stderr bytes.Buffer
 		cmd.Stderr = &stderr
 
 		if err := cmd.Run(); err != nil {
-			log.Debugf("Compose: Failed to login to %s: %s", registryHost, stderr.String())
+			// Surface at warn level: a failed login here is the usual cause of a
+			// later "unauthorized" pull, and is otherwise silently swallowed.
+			log.Warnf("Compose: Failed to login to %s: %s", registryHost, strings.TrimSpace(stderr.String()))
 		} else {
 			log.Debugf("Compose: Successfully logged into %s", registryHost)
 		}
@@ -189,9 +212,23 @@ func (c *ComposeClient) Execute(ctx context.Context, op *ComposeOperation) (*Com
 		}, nil
 	}
 
+	// Use an ephemeral Docker config under stacksDir so login and compose share
+	// credentials without writing to $HOME (unwritable under ProtectHome=true).
+	var dockerConfigDir string
+	if (op.Operation == "up" || op.Operation == "pull") && len(op.Registries) > 0 && c.stacksDir != "" {
+		if err := os.MkdirAll(c.stacksDir, 0755); err != nil {
+			log.Warnf("Compose: could not create stacks dir %s, registry auth may fail: %v", c.stacksDir, err)
+		} else if dir, err := os.MkdirTemp(c.stacksDir, ".docker-"); err == nil {
+			dockerConfigDir = dir
+			defer os.RemoveAll(dockerConfigDir)
+		} else {
+			log.Warnf("Compose: could not create docker config dir, registry auth may fail: %v", err)
+		}
+	}
+
 	// Login to registries before up/pull operations
 	if op.Operation == "up" || op.Operation == "pull" {
-		c.loginToRegistries(ctx, op.Registries)
+		c.loginToRegistries(ctx, op.Registries, dockerConfigDir)
 	}
 
 	// Build command arguments
@@ -445,20 +482,12 @@ func (c *ComposeClient) Execute(ctx context.Context, op *ComposeOperation) (*Com
 		cmd.Dir = op.WorkDir
 	}
 
-	// Set clean environment to prevent host env vars from overriding compose stack variables
-	cmd.Env = []string{
-		fmt.Sprintf("DOCKER_HOST=unix://%s", c.dockerSocket),
-	}
-	for _, key := range []string{"PATH", "HOME", "USER"} {
-		if val, ok := os.LookupEnv(key); ok {
-			cmd.Env = append(cmd.Env, key+"="+val)
-		}
-	}
-
-	// Set API version for compatibility with newer Docker daemons
-	// This allows older docker CLI to work with newer daemons
+	// Clean environment so host vars and the stack's own EnvVars (below) can't
+	// redirect docker. dockerConfigDir carries the credentials written by
+	// loginToRegistries; the user EnvVars loop rejects DOCKER_CONFIG
+	// (see deniedEnvKeys) and so cannot override it.
+	cmd.Env = c.dockerEnv(dockerConfigDir)
 	if c.apiVersion != "" {
-		cmd.Env = append(cmd.Env, fmt.Sprintf("DOCKER_API_VERSION=%s", c.apiVersion))
 		log.Debugf("Compose: Using API version %s", c.apiVersion)
 	}
 
