@@ -30,6 +30,7 @@ RUN apk add --no-cache curl \
 
 # Generate apko.yaml for current target architecture only
 # We build single-arch to avoid multi-arch layer confusion in extraction
+# Note: no wget/curl - the HEALTHCHECK uses the built-in "hawser healthcheck"
 RUN APKO_ARCH=$([ "$TARGETARCH" = "arm64" ] && echo "aarch64" || echo "x86_64") \
     && printf '%s\n' \
     "contents:" \
@@ -44,7 +45,6 @@ RUN APKO_ARCH=$([ "$TARGETARCH" = "arm64" ] && echo "aarch64" || echo "x86_64") 
     "    - docker-cli" \
     "    - docker-compose=5.5.0-r0" \
     "    - docker-cli-buildx" \
-    "    - wget" \
     "entrypoint:" \
     "  command: /bin/sh -l" \
     "archs:" \
@@ -90,15 +90,14 @@ RUN mkdir -p /usr/libexec/docker/cli-plugins \
 VOLUME /data/stacks
 
 # Copy pre-built binary (provided by goreleaser)
-COPY hawser /usr/local/bin/hawser
-RUN chmod +x /usr/local/bin/hawser
+COPY --chmod=0755 hawser /usr/local/bin/hawser
 
 # Expose default port
 EXPOSE 2376
 
-# Health check - auto-detects TLS mode
+# Health check - uses the built-in subcommand (auto-detects TLS mode)
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
-    CMD if [ -n "$TLS_CERT" ]; then wget -q --spider --no-check-certificate https://localhost:${PORT}/_hawser/health; else wget -q --spider http://localhost:${PORT}/_hawser/health; fi || exit 1
+    CMD ["/usr/local/bin/hawser", "healthcheck"]
 
 # Run as root to access Docker socket (can be changed with --user flag)
 ENTRYPOINT ["/usr/local/bin/hawser"]
