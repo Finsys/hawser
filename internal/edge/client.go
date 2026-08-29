@@ -591,6 +591,26 @@ func (c *Client) handleStreamingRequest(req *protocol.RequestMessage, headers ma
 	}
 }
 
+// annotateComposeTimeout rewrites result.Error to explicitly call out that
+// the compose operation was aborted because our own context timeout expired
+// — as opposed to a genuine compose failure (missing image, invalid compose
+// file, ...). When the context expires, exec.CommandContext kills the
+// docker-compose subprocess and cmd.Run() returns a generic error such as
+// "signal: killed"; Go's exec package never surfaces "context deadline
+// exceeded" through that error, so on its own it looks exactly like an
+// ordinary compose failure. ctx.Err() is the only reliable way to tell the
+// two apart. The original error/progress output is preserved, just no
+// longer left to stand alone as the (misleading) cause.
+func (c *Client) annotateComposeTimeout(ctx context.Context, result *docker.ComposeResult) {
+	if result.Success || !errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return
+	}
+	result.Error = fmt.Sprintf(
+		"compose operation aborted: exceeded the %ds COMPOSE_TIMEOUT (raise COMPOSE_TIMEOUT if this operation legitimately needs more time); underlying error: %s",
+		c.cfg.ComposeTimeout, result.Error,
+	)
+}
+
 // handleComposeRequest handles Docker Compose operations
 func (c *Client) handleComposeRequest(ctx context.Context, req *protocol.RequestMessage) {
 	var op docker.ComposeOperation
@@ -606,6 +626,8 @@ func (c *Client) handleComposeRequest(ctx context.Context, req *protocol.Request
 		c.sendJSON(protocol.NewErrorMessage(req.RequestID, err.Error(), "COMPOSE_ERROR"))
 		return
 	}
+
+	c.annotateComposeTimeout(ctx, result)
 
 	respBody, _ := json.Marshal(result)
 	statusCode := http.StatusOK
