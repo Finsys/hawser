@@ -70,3 +70,33 @@ func TestValidate_EdgeMode_Unaffected(t *testing.T) {
 		t.Fatalf("edge-mode validate() unexpected error: %v", err)
 	}
 }
+
+// TestLoad_ComposeTimeout verifies ComposeTimeout defaults to 900s and can be
+// overridden via COMPOSE_TIMEOUT, mirroring how RequestTimeout already
+// behaves. DOCKER_HOST is set so Load() skips the local docker-socket
+// existence check, isolating the timeout-parsing behavior under test.
+func TestLoad_ComposeTimeout(t *testing.T) {
+	t.Setenv("DOCKER_HOST", "tcp://localhost:2375")
+	t.Setenv("TOKEN", "test-token")
+
+	t.Run("defaults to 900 when unset", func(t *testing.T) {
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		if cfg.ComposeTimeout != 900 {
+			t.Errorf("ComposeTimeout = %d, want 900", cfg.ComposeTimeout)
+		}
+	})
+
+	t.Run("overridden via COMPOSE_TIMEOUT", func(t *testing.T) {
+		t.Setenv("COMPOSE_TIMEOUT", "120")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		if cfg.ComposeTimeout != 120 {
+			t.Errorf("ComposeTimeout = %d, want 120", cfg.ComposeTimeout)
+		}
+	})
+}

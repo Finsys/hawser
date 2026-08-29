@@ -436,6 +436,19 @@ func (c *Client) handleMessage(data []byte) {
 	}
 }
 
+// requestTimeout returns the context timeout to use for a non-streaming
+// request. Compose operations (up/down/pull) can legitimately run far longer
+// than a normal Docker API call — pulling images, recreating containers and
+// waiting on depends_on health checks routinely take minutes — so they get
+// their own timeout (ComposeTimeout, default 900s) instead of inheriting the
+// short RequestTimeout (default 30s) meant for ordinary Docker API calls.
+func (c *Client) requestTimeout(path string) time.Duration {
+	if path == "/_hawser/compose" {
+		return time.Duration(c.cfg.ComposeTimeout) * time.Second
+	}
+	return time.Duration(c.cfg.RequestTimeout) * time.Second
+}
+
 // handleRequest processes Docker API requests
 func (c *Client) handleRequest(req *protocol.RequestMessage) {
 	log.Infof("Docker API request: %s %s (streaming=%v)", req.Method, req.Path, req.Streaming)
@@ -452,8 +465,11 @@ func (c *Client) handleRequest(req *protocol.RequestMessage) {
 		return
 	}
 
-	// Non-streaming requests use a timeout context
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(c.cfg.RequestTimeout)*time.Second)
+	// Non-streaming requests use a timeout context. Compose operations get
+	// their own, separately configurable timeout (see requestTimeout) since
+	// image pulls, container recreation and depends_on health-check waits can
+	// legitimately run far longer than a normal Docker API call.
+	ctx, cancel := context.WithTimeout(context.Background(), c.requestTimeout(req.Path))
 	defer cancel()
 
 	// Check if this is a compose operation

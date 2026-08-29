@@ -193,6 +193,8 @@ DOCKER_SOCKET=/var/run/docker.sock
 
 # Connection settings (optional)
 # HEARTBEAT_INTERVAL=30
+# REQUEST_TIMEOUT=30
+# COMPOSE_TIMEOUT=900
 # RECONNECT_DELAY=1
 # MAX_RECONNECT_DELAY=60
 # WELCOME_TIMEOUT=30
@@ -474,6 +476,7 @@ Hawser is configured via environment variables:
 | `AGENT_NAME` | Human-readable agent name | Hostname |
 | `HEARTBEAT_INTERVAL` | Heartbeat interval in seconds | `30` |
 | `REQUEST_TIMEOUT` | Request timeout in seconds | `30` |
+| `COMPOSE_TIMEOUT` | Compose operation timeout in seconds (up/down/pull can run far longer than a normal request) | `900` |
 | `RECONNECT_DELAY` | Initial reconnect delay (Edge mode) | `1` |
 | `MAX_RECONNECT_DELAY` | Maximum reconnect delay | `60` |
 | `WELCOME_TIMEOUT` | Timeout in seconds waiting for welcome after hello (Edge mode) | `30` |
