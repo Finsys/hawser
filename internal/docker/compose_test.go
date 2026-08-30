@@ -2,8 +2,12 @@ package docker
 
 import (
 	"context"
+	"fmt"
+	"os/exec"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 // TestExecuteEmitsLines verifies that Execute reports complete lines through
@@ -44,4 +48,70 @@ func TestOutputFallsBackToStderr(t *testing.T) {
 	if !strings.Contains(res.Output, "no configuration file provided") {
 		t.Fatalf("Output = %q, want it to contain the stderr message (fallback did not apply)", res.Output)
 	}
+}
+
+// TestExecuteEmitsBuildOutputFromStdout verifies that Execute captures build
+// output specifically, because that is the one case where hooking stderr
+// alone (the naive reading of "compose writes progress to stderr") silently
+// drops the bulk of the output: a prior measurement found that WITHOUT a
+// build compose writes to stderr only, but WITH a build the build log lands
+// on stdout. TestExecuteEmitsLines alone cannot catch a regression that
+// forgets to wire cmd.Stdout -- this test builds a trivial one-line image and
+// checks that a marker written by the build reaches onLine.
+//
+// Skips if Docker is unavailable or unreachable, since this is the one test
+// in this package that needs a real daemon rather than just the compose CLI
+// failing fast on its own.
+func TestExecuteEmitsBuildOutputFromStdout(t *testing.T) {
+	if _, err := exec.LookPath("docker"); err != nil {
+		t.Skip("docker not on PATH")
+	}
+	if err := exec.Command("docker", "info").Run(); err != nil {
+		t.Skip("docker daemon not reachable")
+	}
+
+	const marker = "HAWSER_BUILD_OUTPUT_MARKER"
+	project := fmt.Sprintf("hawsertest%d", time.Now().UnixNano())
+
+	c := NewComposeClient("/var/run/docker.sock", t.TempDir())
+	op := &ComposeOperation{
+		Operation:   "up",
+		ProjectName: project,
+		Build:       true,
+		Files: map[string]string{
+			"docker-compose.yml": "services:\n  app:\n    build: .\n    command: [\"true\"]\n",
+			"Dockerfile":         "FROM alpine:3.20\nRUN echo " + marker + "\n",
+		},
+	}
+
+	t.Cleanup(func() {
+		_, _ = c.Execute(context.Background(), &ComposeOperation{
+			Operation:   "down",
+			ProjectName: project,
+		}, nil)
+		_ = exec.Command("docker", "rmi", project+"-app:latest").Run()
+	})
+
+	var mu sync.Mutex
+	var lines []string
+	res, err := c.Execute(context.Background(), op, func(l string) {
+		mu.Lock()
+		lines = append(lines, l)
+		mu.Unlock()
+	})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !res.Success {
+		t.Fatalf("compose up --build failed: %s", res.Error)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	for _, l := range lines {
+		if strings.Contains(l, marker) {
+			return // found on some line -- the assertion
+		}
+	}
+	t.Fatalf("build marker %q not seen in %d emitted lines -- stdout not wired to onLine?", marker, len(lines))
 }
