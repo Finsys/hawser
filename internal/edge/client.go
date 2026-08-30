@@ -585,7 +585,7 @@ func (c *Client) handleComposeRequest(ctx context.Context, req *protocol.Request
 
 	log.Infof("Compose operation: %s on %s", op.Operation, op.ProjectName)
 
-	result, err := c.compose.Execute(ctx, &op)
+	result, err := c.compose.Execute(ctx, &op, nil) // nil for now; task 7 wires a streaming callback here
 	if err != nil {
 		c.sendJSON(protocol.NewErrorMessage(req.RequestID, err.Error(), "COMPOSE_ERROR"))
 		return
