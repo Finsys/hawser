@@ -543,7 +543,7 @@ func (s *Server) handleCompose(w http.ResponseWriter, r *http.Request) {
 
 	log.Debugf("Compose operation: %s on %s", op.Operation, op.ProjectName)
 
-	result, err := s.compose.Execute(r.Context(), &op)
+	result, err := s.compose.Execute(r.Context(), &op, nil) // nil: REST has no channel for streamed lines
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(docker.ComposeResult{
