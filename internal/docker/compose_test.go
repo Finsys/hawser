@@ -1,9 +1,11 @@
 package docker
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os/exec"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -114,4 +116,37 @@ func TestExecuteEmitsBuildOutputFromStdout(t *testing.T) {
 		}
 	}
 	t.Fatalf("build marker %q not seen in %d emitted lines -- stdout not wired to onLine?", marker, len(lines))
+}
+
+// TestTeeLinesFlushesFinalLineWithoutNewline verifies teeLines' closer
+// contract directly: the scanner only flushes an unterminated final line on
+// EOF, so the returned close() must trigger that EOF (by closing the pipe's
+// write end) before Execute reads the result. Without it, the last line of
+// output -- often the most important one, e.g. a build's final status line
+// -- would never reach onLine.
+func TestTeeLinesFlushesFinalLineWithoutNewline(t *testing.T) {
+	var buf bytes.Buffer
+	var mu sync.Mutex
+	var lines []string
+
+	w, closeFn := teeLines(&buf, func(l string) {
+		mu.Lock()
+		lines = append(lines, l)
+		mu.Unlock()
+	})
+
+	if _, err := w.Write([]byte("first line\nlast line without newline")); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	closeFn()
+
+	mu.Lock()
+	defer mu.Unlock()
+	want := []string{"first line", "last line without newline"}
+	if !reflect.DeepEqual(lines, want) {
+		t.Fatalf("lines = %v, want %v", lines, want)
+	}
+	if buf.String() != "first line\nlast line without newline" {
+		t.Fatalf("buf = %q, teeLines must still write dst (Execute's result buffer)", buf.String())
+	}
 }
