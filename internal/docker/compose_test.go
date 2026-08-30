@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"reflect"
 	"strings"
@@ -61,10 +62,19 @@ func TestOutputFallsBackToStderr(t *testing.T) {
 // forgets to wire cmd.Stdout -- this test builds a trivial one-line image and
 // checks that a marker written by the build reaches onLine.
 //
-// Skips if Docker is unavailable or unreachable, since this is the one test
-// in this package that needs a real daemon rather than just the compose CLI
-// failing fast on its own.
+// Gated behind HAWSER_TEST_DOCKER: this is the only test in the repo that
+// needs Docker to actually build an image rather than just fail fast on its
+// own, and this package's other tests intentionally have no external
+// dependency. Running it unconditionally would make it the first test in an
+// external contributor's CI run to spin up a real image build -- a fair
+// objection from a maintainer who wasn't expecting that. Set
+// HAWSER_TEST_DOCKER=1 to run it locally; it also skips (rather than fails)
+// if Docker turns out to be unavailable or unreachable even with the switch
+// set.
 func TestExecuteEmitsBuildOutputFromStdout(t *testing.T) {
+	if os.Getenv("HAWSER_TEST_DOCKER") == "" {
+		t.Skip("set HAWSER_TEST_DOCKER=1 to run tests that build images with docker compose")
+	}
 	if _, err := exec.LookPath("docker"); err != nil {
 		t.Skip("docker not on PATH")
 	}
