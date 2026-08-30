@@ -121,6 +121,12 @@ type ComposeOperation struct {
 	PullPolicy      string                `json:"pullPolicy,omitempty"`      // Pull policy: 'always' | 'missing' | 'never'
 	FilesToDelete   []FileToDelete        `json:"filesToDelete,omitempty"`   // Git deletion sync (#966): hash-verified file removals
 	RemoveFiles     bool                  `json:"removeFiles,omitempty"`     // On down: remove the stack directory entirely (#1162, stack deletion only)
+	// StreamOutput requests that Execute's onLine callback be wired up, so the
+	// caller receives one message per output line as the compose command runs
+	// instead of only the buffered result at the end. Defaults to false: a
+	// caller that doesn't know this field (an older Dockhand) gets exactly the
+	// old behavior, never unsolicited per-line messages.
+	StreamOutput bool `json:"streamOutput,omitempty"`
 }
 
 // ComposeResult is the result of a compose operation
@@ -213,6 +219,13 @@ func teeLines(dst *bytes.Buffer, onLine func(string)) (io.Writer, func()) {
 // it (interleaved across both streams, same as a terminal would show them).
 // Pass nil for today's behavior: buffered output only, returned in the
 // result once the command has finished.
+//
+// onLine is called from two separate goroutines -- one teeLines scanner for
+// stdout, one for stderr, running concurrently for the lifetime of the
+// command -- so it MUST be safe to call from multiple goroutines at once.
+// A callback that only forwards to something already safe for concurrent
+// use (e.g. Client.sendJSON, which takes its own lock) needs no extra
+// synchronization; a callback with its own mutable state does.
 func (c *ComposeClient) Execute(ctx context.Context, op *ComposeOperation, onLine func(string)) (*ComposeResult, error) {
 	// Detect compose command on first use
 	if err := c.detectComposeCommand(); err != nil {
