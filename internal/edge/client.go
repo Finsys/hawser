@@ -30,11 +30,22 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+// composeExecutor is the subset of *docker.ComposeClient that Client needs.
+// Declared here (not as the concrete type) so tests can substitute a fake
+// that never shells out to a real docker/docker-compose binary -- Execute
+// would otherwise depend on Docker being installed, which this package's
+// tests are meant to avoid (see docker.ComposeClient.Execute, and the one
+// intentionally-gated Docker-dependent test in internal/docker).
+type composeExecutor interface {
+	Execute(ctx context.Context, op *docker.ComposeOperation, onLine func(string)) (*docker.ComposeResult, error)
+	IsAvailable() bool
+}
+
 // Client represents the Edge mode WebSocket client
 type Client struct {
 	cfg          *config.Config
 	dockerClient *docker.Client
-	compose      *docker.ComposeClient
+	compose      composeExecutor
 	metrics      *metrics.Collector
 	conn         *websocket.Conn
 	mu           sync.Mutex
@@ -585,7 +596,22 @@ func (c *Client) handleComposeRequest(ctx context.Context, req *protocol.Request
 
 	log.Infof("Compose operation: %s on %s", op.Operation, op.ProjectName)
 
-	result, err := c.compose.Execute(ctx, &op)
+	// Only send per-line stream messages when the caller asked for them
+	// (op.StreamOutput). An older Dockhand never sets this field, so it must
+	// never receive a "stream" message for a compose request -- it wouldn't
+	// know what to do with one. onLine is invoked from two goroutines
+	// concurrently (see docker.ComposeClient.Execute's doc comment); it needs
+	// no extra locking here because it only forwards to c.sendJSON, which
+	// already serializes writes to the connection under c.mu.
+	var onLine func(string)
+	if op.StreamOutput {
+		onLine = func(line string) {
+			// Same call shape as handleStreamingRequest (client.go:567).
+			c.sendJSON(protocol.NewStreamMessage(req.RequestID, []byte(line), ""))
+		}
+	}
+
+	result, err := c.compose.Execute(ctx, &op, onLine)
 	if err != nil {
 		c.sendJSON(protocol.NewErrorMessage(req.RequestID, err.Error(), "COMPOSE_ERROR"))
 		return

@@ -1,11 +1,13 @@
 package docker
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -119,6 +121,12 @@ type ComposeOperation struct {
 	PullPolicy      string                `json:"pullPolicy,omitempty"`      // Pull policy: 'always' | 'missing' | 'never'
 	FilesToDelete   []FileToDelete        `json:"filesToDelete,omitempty"`   // Git deletion sync (#966): hash-verified file removals
 	RemoveFiles     bool                  `json:"removeFiles,omitempty"`     // On down: remove the stack directory entirely (#1162, stack deletion only)
+	// StreamOutput requests that Execute's onLine callback be wired up, so the
+	// caller receives one message per output line as the compose command runs
+	// instead of only the buffered result at the end. Defaults to false: a
+	// caller that doesn't know this field (an older Dockhand) gets exactly the
+	// old behavior, never unsolicited per-line messages.
+	StreamOutput bool `json:"streamOutput,omitempty"`
 }
 
 // ComposeResult is the result of a compose operation
@@ -178,8 +186,47 @@ func (c *ComposeClient) loginToRegistries(ctx context.Context, registries []Regi
 	}
 }
 
-// Execute runs a Docker Compose operation
-func (c *ComposeClient) Execute(ctx context.Context, op *ComposeOperation) (*ComposeResult, error) {
+// teeLines wires dst (the buffer Execute already accumulates for the final
+// result) to also emit complete lines to onLine as they arrive. If onLine is
+// nil, it returns dst unchanged and a no-op closer -- today's behavior.
+//
+// The caller MUST call the returned close() after cmd.Run() returns: io.Pipe
+// is synchronous, the scanner only flushes its final unterminated line on
+// EOF, and without the close the scanner goroutine blocks forever -- a leak
+// on every call.
+func teeLines(dst *bytes.Buffer, onLine func(string)) (io.Writer, func()) {
+	if onLine == nil {
+		return dst, func() {}
+	}
+	pr, pw := io.Pipe()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		sc := bufio.NewScanner(pr)
+		sc.Buffer(make([]byte, 0, 64*1024), 1024*1024) // compose lines can be long
+		for sc.Scan() {
+			onLine(sc.Text())
+		}
+	}()
+	return io.MultiWriter(dst, pw), func() {
+		pw.Close() // flushes the scanner's final line
+		<-done     // no line may arrive after Execute returned
+	}
+}
+
+// Execute runs a Docker Compose operation. onLine, if non-nil, is invoked
+// with each complete line of stdout/stderr as the compose command produces
+// it (interleaved across both streams, same as a terminal would show them).
+// Pass nil for today's behavior: buffered output only, returned in the
+// result once the command has finished.
+//
+// onLine is called from two separate goroutines -- one teeLines scanner for
+// stdout, one for stderr, running concurrently for the lifetime of the
+// command -- so it MUST be safe to call from multiple goroutines at once.
+// A callback that only forwards to something already safe for concurrent
+// use (e.g. Client.sendJSON, which takes its own lock) needs no extra
+// synchronization; a callback with its own mutable state does.
+func (c *ComposeClient) Execute(ctx context.Context, op *ComposeOperation, onLine func(string)) (*ComposeResult, error) {
 	// Detect compose command on first use
 	if err := c.detectComposeCommand(); err != nil {
 		return &ComposeResult{
@@ -483,10 +530,15 @@ func (c *ComposeClient) Execute(ctx context.Context, op *ComposeOperation) (*Com
 	// Log the command being executed
 	log.Debugf("Compose: %s %s (project=%s)", c.composeCmd, strings.Join(fullArgs, " "), op.ProjectName)
 
-	// Capture output
+	// Capture output. Compose writes progress to stderr, not stdout in most
+	// cases -- but WITH a build the bulk of the output lands on stdout
+	// (measured in task 0), so both streams are wired to onLine, not stderr
+	// alone.
 	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	stdoutWriter, closeStdout := teeLines(&stdout, onLine)
+	stderrWriter, closeStderr := teeLines(&stderr, onLine)
+	cmd.Stdout = stdoutWriter
+	cmd.Stderr = stderrWriter
 
 	// Pipe compose content via stdin if provided
 	if stdinContent != "" {
@@ -494,6 +546,8 @@ func (c *ComposeClient) Execute(ctx context.Context, op *ComposeOperation) (*Com
 	}
 
 	err := cmd.Run()
+	closeStdout() // after Run(), before the streamed buffers are read below
+	closeStderr()
 
 	result := &ComposeResult{
 		Success:      err == nil,
@@ -546,6 +600,13 @@ func (c *ComposeClient) Execute(ctx context.Context, op *ComposeOperation) (*Com
 		if strings.HasPrefix(strings.TrimSpace(stderr.String()), "[") {
 			result.Output = stderr.String()
 		}
+	}
+
+	// Fall back to stderr: compose writes its progress there, so stdout is
+	// usually empty. This runs after the ps/JSON special case above so it
+	// only kicks in when neither of them already produced an output.
+	if strings.TrimSpace(result.Output) == "" {
+		result.Output = stderr.String()
 	}
 
 	return result, nil
