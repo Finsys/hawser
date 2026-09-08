@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"reflect"
@@ -158,5 +159,66 @@ func TestTeeLinesFlushesFinalLineWithoutNewline(t *testing.T) {
 	}
 	if buf.String() != "first line\nlast line without newline" {
 		t.Fatalf("buf = %q, teeLines must still write dst (Execute's result buffer)", buf.String())
+	}
+}
+
+// TestTeeLinesHandlesHugeLineWithoutDeadlock guards the fix for the >1MB
+// unterminated-line deadlock: a bufio.Scanner capped at 1MB stops reading such
+// a line, leaving the pipe unread and blocking every further write to it. With
+// bufio.Reader the whole line is delivered and close() returns promptly.
+func TestTeeLinesHandlesHugeLineWithoutDeadlock(t *testing.T) {
+	var buf bytes.Buffer
+	var mu sync.Mutex
+	var got []string
+	w, closeFn := teeLines(&buf, func(l string) {
+		mu.Lock()
+		got = append(got, l)
+		mu.Unlock()
+	})
+
+	huge := strings.Repeat("x", 2*1024*1024) // 2MB, no newline
+	payload := huge + "\nEND\n"
+
+	// The write itself blocks against the unfixed teeLines (the reader goroutine
+	// exits on ErrTooLong, so the pipe has no reader), so it MUST run off the
+	// test goroutine -- otherwise a broken teeLines hangs here until the whole
+	// package's test timeout rather than failing this test cleanly. Both the
+	// write and the close have to complete within the deadline.
+	writeDone := make(chan error, 1)
+	go func() {
+		if _, err := io.WriteString(w, payload); err != nil {
+			writeDone <- err
+			return
+		}
+		closeFn() // flushes the trailing "END" and joins the reader goroutine
+		writeDone <- nil
+	}()
+
+	select {
+	case err := <-writeDone:
+		if err != nil {
+			t.Fatalf("Write: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("write/close on a >1MB line did not complete in 5s -- teeLines deadlocked (scanner-cap regression)")
+	}
+
+	// Assert on the delivered content, not merely on "no deadlock": a >1MB line
+	// must reach onLine WHOLE, the trailing short line must follow, and dst (the
+	// buffer Execute returns as result.Output) must hold the raw bytes. The
+	// unfixed teeLines cannot satisfy these even if a harness happened to drain
+	// the pipe -- the huge line never reaches the capped scanner.
+	mu.Lock()
+	defer mu.Unlock()
+	want := []string{huge, "END"}
+	if !reflect.DeepEqual(got, want) {
+		desc := make([]string, len(got))
+		for i, l := range got {
+			desc[i] = fmt.Sprintf("%d bytes", len(l))
+		}
+		t.Fatalf("lines = %v, want [2MB line, \"END\"]", desc)
+	}
+	if buf.String() != payload {
+		t.Fatalf("dst buffer = %d bytes, want the full %d bytes written", buf.Len(), len(payload))
 	}
 }

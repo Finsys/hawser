@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/Finsys/hawser/internal/log"
 )
@@ -202,14 +203,30 @@ func teeLines(dst *bytes.Buffer, onLine func(string)) (io.Writer, func()) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		sc := bufio.NewScanner(pr)
-		sc.Buffer(make([]byte, 0, 64*1024), 1024*1024) // compose lines can be long
-		for sc.Scan() {
-			onLine(sc.Text())
+		// Close the read end on the way out no matter how we exit. ReadString
+		// removes the one known early-return (Scanner's ErrTooLong on a >1MB
+		// line), but a future one -- e.g. a panic in onLine -- would again
+		// leave the writer with no reader and block it forever. Closing pr
+		// hands any further write ErrClosedPipe instead of a permanent block.
+		defer pr.Close()
+		// bufio.Reader, not bufio.Scanner: Scanner caps a line at its buffer
+		// size and, once a line exceeds it, stops reading -- which leaves the
+		// pipe with no reader and blocks the compose subprocess's writes
+		// forever (cmd.Run never returns). ReadString has no such cap and
+		// returns the trailing partial line on EOF.
+		br := bufio.NewReader(pr)
+		for {
+			line, err := br.ReadString('\n')
+			if len(line) > 0 {
+				onLine(strings.TrimRight(line, "\n"))
+			}
+			if err != nil {
+				return // io.EOF on pw.Close(), or a pipe error
+			}
 		}
 	}()
 	return io.MultiWriter(dst, pw), func() {
-		pw.Close() // flushes the scanner's final line
+		pw.Close() // EOF to the reader: flushes any final unterminated line
 		<-done     // no line may arrive after Execute returned
 	}
 }
@@ -484,6 +501,13 @@ func (c *ComposeClient) Execute(ctx context.Context, op *ComposeOperation, onLin
 
 	// Execute compose command
 	cmd := exec.CommandContext(ctx, c.composeCmd, fullArgs...)
+
+	// Structural guard for the whole "Wait() hangs on an output-copy goroutine"
+	// class: when the context fires, exec kills the process but Wait() still
+	// blocks on the stdout/stderr copier. WaitDelay caps that wait -- after the
+	// process is gone, Wait() returns within WaitDelay even if a copier is
+	// wedged, so a timeout always bites regardless of which writer stalls.
+	cmd.WaitDelay = 10 * time.Second
 
 	// Set working directory (use stackDir if files were written, otherwise use WorkDir)
 	if stackDir != "" {
