@@ -18,6 +18,7 @@ import (
 	"github.com/Finsys/hawser/internal/config"
 	"github.com/Finsys/hawser/internal/docker"
 	"github.com/Finsys/hawser/internal/log"
+	"github.com/Finsys/hawser/internal/metrics"
 	"github.com/Finsys/hawser/internal/pool"
 )
 
@@ -506,8 +507,7 @@ func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
 	// Get host uptime
 	uptime := getHostUptime()
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	info := map[string]interface{}{
 		"agentId":       s.cfg.AgentID,
 		"agentName":     s.cfg.AgentName,
 		"dockerVersion": dockerVersion,
@@ -515,7 +515,42 @@ func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
 		"mode":          "standard",
 		"uptime":        uptime,
 		"capabilities":  []string{"exec", "metrics", "events", "compose", "git-sync-delete"},
-	})
+	}
+
+	// Disk usage for the Docker data root, mirroring the field names Edge
+	// mode sends via the periodic metrics channel (protocol.HostMetrics).
+	// Standard mode has no running metrics.Collector, so this is a one-shot
+	// stat rather than a subscription to Collector's periodic push -- see
+	// addDiskInfo. Respects SKIP_DF_COLLECTION for the same reason Edge mode
+	// does: on hosts with many mounted volumes, statfs can be slow.
+	if os.Getenv("SKIP_DF_COLLECTION") == "" {
+		dataRoot, err := s.dockerClient.GetDataRoot(r.Context())
+		if err != nil {
+			dataRoot = "/var/lib/docker"
+		}
+		addDiskInfo(info, dataRoot)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(info)
+}
+
+// addDiskInfo augments info with diskTotal/diskUsed/diskFree (bytes) for the
+// given path, typically the Docker data root. It is split out from
+// handleInfo so it can be unit-tested directly against a real or a
+// deliberately missing path, without a live Docker client or an HTTP round
+// trip. On a stat failure it leaves info unchanged instead of writing a
+// misleading 0 -- the same "absent means unavailable" convention
+// internal/metrics.HostMetrics uses on the Edge-mode wire format.
+func addDiskInfo(info map[string]interface{}, dataRoot string) {
+	total, used, free, err := metrics.DiskUsage(dataRoot)
+	if err != nil {
+		log.Debugf("Disk info unavailable for %s: %v", dataRoot, err)
+		return
+	}
+	info["diskTotal"] = total
+	info["diskUsed"] = used
+	info["diskFree"] = free
 }
 
 // handleCompose handles Docker Compose operations
