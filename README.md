@@ -463,6 +463,7 @@ Hawser is configured via environment variables:
 |----------|-------------|---------|
 | `DOCKHAND_SERVER_URL` | WebSocket URL for Edge mode | - |
 | `TOKEN` | Authentication token. Required in Edge mode, and in Standard mode when binding a non-loopback address. | - |
+| `TOKEN_FILE` | Path to a file containing the authentication token (takes precedence over `TOKEN`, e.g., for Docker Secrets). | - |
 | `CA_CERT` | Path to CA certificate for Edge mode (self-signed Dockhand) | - |
 | `TLS_SKIP_VERIFY` | Skip TLS verification for Edge mode (insecure) | `false` |
 | `PORT` | HTTP server port (Standard mode) | `2376` |
