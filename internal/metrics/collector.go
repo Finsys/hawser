@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Finsys/hawser/internal/docker"
+	"github.com/Finsys/hawser/internal/log"
 	"github.com/Finsys/hawser/internal/protocol"
 )
 
@@ -62,12 +63,18 @@ func (c *Collector) Collect() (*protocol.HostMetrics, error) {
 	// Skip if SKIP_DF_COLLECTION is set (useful for NAS devices with many mounted volumes
 	// where statfs calls can be slow and cause performance issues)
 	if os.Getenv("SKIP_DF_COLLECTION") == "" {
-		diskTotal, diskUsed, diskFree, err := c.collectDisk()
-		if err == nil {
-			metrics.DiskTotal = diskTotal
-			metrics.DiskUsed = diskUsed
-			metrics.DiskFree = diskFree
+		dataRoot, rootErr := c.dockerClient.GetDataRoot(context.Background())
+		if rootErr != nil {
+			dataRoot = "/var/lib/docker"
 		}
+
+		diskTotal, diskUsed, diskFree, err := DiskUsage(dataRoot)
+		if err != nil {
+			// Leave Disk* nil so the field is omitted from the outgoing JSON
+			// instead of reporting a misleading 0 (see HostMetrics doc comment).
+			log.Warnf("Disk metrics unavailable for %s: %v", dataRoot, err)
+		}
+		applyDiskMetrics(metrics, diskTotal, diskUsed, diskFree, err)
 	}
 
 	// Collect network stats
@@ -214,16 +221,16 @@ func (c *Collector) collectMemorySyscall() (total, used, free uint64, err error)
 	return 0, 0, 0, nil
 }
 
-// collectDisk reads disk usage for Docker data root
-func (c *Collector) collectDisk() (total, used, free uint64, err error) {
-	// Get Docker data root
-	dataRoot, err := c.dockerClient.GetDataRoot(context.Background())
-	if err != nil {
-		dataRoot = "/var/lib/docker"
-	}
-
+// DiskUsage reads disk usage for the given path (typically the Docker data
+// root). It is exported and package-level -- rather than a Collector method
+// -- so it can be tested directly against a real or a deliberately missing
+// path without a live Docker client, and so it can be reused by callers
+// that do not run the periodic Edge-mode Collector at all, such as the
+// Standard-mode HTTP server's /_hawser/info handler
+// (internal/server.addDiskInfo).
+func DiskUsage(path string) (total, used, free uint64, err error) {
 	var stat syscall.Statfs_t
-	if err := syscall.Statfs(dataRoot, &stat); err != nil {
+	if err := syscall.Statfs(path, &stat); err != nil {
 		return 0, 0, 0, err
 	}
 
@@ -232,6 +239,20 @@ func (c *Collector) collectDisk() (total, used, free uint64, err error) {
 	used = total - free
 
 	return total, used, free, nil
+}
+
+// applyDiskMetrics writes the collectDisk() result onto m. On success it
+// stores pointers to the values so a legitimate 0 (e.g. an empty data root)
+// still marshals as "0" on the wire. On failure it leaves the fields nil so
+// they are omitted from the outgoing JSON instead of silently reporting a
+// misleading 0 for "no data available".
+func applyDiskMetrics(m *protocol.HostMetrics, total, used, free uint64, err error) {
+	if err != nil {
+		return
+	}
+	m.DiskTotal = &total
+	m.DiskUsed = &used
+	m.DiskFree = &free
 }
 
 // collectNetwork reads network interface statistics
