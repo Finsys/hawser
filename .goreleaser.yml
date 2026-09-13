@@ -93,6 +93,51 @@ docker_manifests:
       - "ghcr.io/finsys/hawser:latest-arm64"
       - "ghcr.io/finsys/hawser:latest-armv7"
 
+nfpms:
+  - id: hawser
+    package_name: hawser
+    description: |-
+      Remote Docker agent for Dockhand
+      Hawser lets a Dockhand server manage remote Docker hosts over HTTP or
+      outbound WebSocket connections.
+    maintainer: Finsys / Jarek Krochmalski <support@dockhand.pro>
+    section: net
+    homepage: https://dockhand.pro/
+    ids:
+      - hawser
+    formats:
+      - deb
+    dependencies:
+      - docker-ce
+      - libc6
+    contents:
+      - src: ./debian/hawser.service
+        dst: /usr/lib/systemd/system/hawser.service
+        packager: deb
+      - src: ./debian/copyright
+        dst: /usr/share/doc/hawser/copyright
+        packager: deb
+    scripts:
+      postinstall: ./debian/postinstall.sh
+      preremove: ./debian/prerm.sh
+      postremove: ./debian/postrm.sh
+    deb:
+      predepends:
+        - adduser
+        - debconf
+      scripts:
+        templates: ./debian/templates
+        config: ./debian/config.sh
+      lintian_overrides:
+        # Go release binaries are intentionally self-contained.
+        - statically-linked-binary
+        # A Debian changelog has not been written yet.
+        - no-changelog
+        # A manpage has not been written yet.
+        - no-manual-page
+        # GoReleaser 2.17 emits this field but cannot currently disable it.
+        - unknown-field Architecture-Variant
+
 checksum:
   name_template: "checksums.txt"
 
