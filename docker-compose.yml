@@ -1,0 +1,17 @@
+services:
+  hawser:
+    container_name: hawser
+    image: ghcr.io/finsys/hawser:latest
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - stacks:/data/stacks
+      - /path/to/certs:/certs:ro  # Optional: with TLS
+    ports:
+      - 2376:2376
+    restart: always
+    environment:
+      - TOKEN=your-secret-token  # Optional: with Token Authentication
+      - TLS_CERT=/certs/server.crt  # Optional: with TLS
+      - TLS_KEY=/certs/server.key  # Optional: with TLS
+volumes:
+  stacks:

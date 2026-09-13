@@ -1,0 +1,17 @@
+services:
+  hawser:
+    container_name: hawser
+    image: ghcr.io/finsys/hawser:latest
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - stacks:/data/stacks
+      - /path/to/dockhand-ca.crt:/certs/ca.crt:ro  # Optional: with Self-Signed Certificate
+    ports:
+      - 2376:2376
+    restart: always
+    environment:
+      - DOCKHAND_SERVER_URL=wss://your-dockhand.example.com/api/hawser/connect
+      - TOKEN=your-agent-token
+      - CA_CERT=/certs/ca.crt  # Optional: with Self-Signed Certificate
+volumes:
+  stacks:
