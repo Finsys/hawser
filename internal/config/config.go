@@ -15,6 +15,7 @@ type Config struct {
 	// Edge Mode (active connection to Dockhand)
 	DockhandServerURL string // e.g., wss://dockhand.example.com/api/hawser/connect
 	Token             string // Agent authentication token
+	TokenFile         string // Optional path to token file (takes precedence over TOKEN)
 	CACert            string // Optional CA certificate path (for self-signed Dockhand)
 	TLSSkipVerify     bool   // Skip TLS verification (insecure, for testing)
 
@@ -54,10 +55,16 @@ type Config struct {
 
 // Load reads configuration from environment variables and flags
 func Load() (*Config, error) {
+	token, err := loadToken()
+	if err != nil {
+		return nil, err
+	}
+
 	cfg := &Config{
 		// Edge mode
 		DockhandServerURL: os.Getenv("DOCKHAND_SERVER_URL"),
-		Token:             os.Getenv("TOKEN"),
+		Token:             token,
+		TokenFile:         os.Getenv("TOKEN_FILE"),
 		CACert:            os.Getenv("CA_CERT"),
 		TLSSkipVerify:     getEnvBool("TLS_SKIP_VERIFY", false),
 
@@ -234,4 +241,18 @@ func getEnvBool(key string, defaultValue bool) bool {
 		}
 	}
 	return defaultValue
+}
+
+// loadToken returns the authentication token.
+// If TOKEN_FILE is set, its contents are read and trimmed, taking precedence over TOKEN.
+// Otherwise, it falls back to the TOKEN environment variable.
+func loadToken() (string, error) {
+	if tokenFile := os.Getenv("TOKEN_FILE"); tokenFile != "" {
+		data, err := os.ReadFile(tokenFile)
+		if err != nil {
+			return "", fmt.Errorf("reading TOKEN_FILE %q: %w", tokenFile, err)
+		}
+		return strings.TrimSpace(string(data)), nil
+	}
+	return os.Getenv("TOKEN"), nil
 }

@@ -1,6 +1,10 @@
 package config
 
-import "testing"
+import (
+	"os"
+	"strings"
+	"testing"
+)
 
 func TestIsLoopbackBind(t *testing.T) {
 	cases := map[string]bool{
@@ -97,6 +101,80 @@ func TestLoad_ComposeTimeout(t *testing.T) {
 		}
 		if cfg.ComposeTimeout != 120 {
 			t.Errorf("ComposeTimeout = %d, want 120", cfg.ComposeTimeout)
+		}
+	})
+}
+
+func TestLoad_Token(t *testing.T) {
+	t.Setenv("DOCKER_HOST", "tcp://localhost:2375")
+
+	t.Run("token loaded from TOKEN env var", func(t *testing.T) {
+		t.Setenv("TOKEN", "env-secret-token")
+		t.Setenv("TOKEN_FILE", "")
+
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		if cfg.Token != "env-secret-token" {
+			t.Errorf("Token = %q, want %q", cfg.Token, "env-secret-token")
+		}
+		if cfg.TokenFile != "" {
+			t.Errorf("TokenFile = %q, want empty", cfg.TokenFile)
+		}
+	})
+
+	t.Run("token loaded from TOKEN_FILE", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		tokenPath := tmpDir + "/token"
+		if err := os.WriteFile(tokenPath, []byte("file-secret-token\n"), 0o600); err != nil {
+			t.Fatalf("failed writing token file: %v", err)
+		}
+
+		t.Setenv("TOKEN", "")
+		t.Setenv("TOKEN_FILE", tokenPath)
+
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		if cfg.Token != "file-secret-token" {
+			t.Errorf("Token = %q, want %q", cfg.Token, "file-secret-token")
+		}
+		if cfg.TokenFile != tokenPath {
+			t.Errorf("TokenFile = %q, want %q", cfg.TokenFile, tokenPath)
+		}
+	})
+
+	t.Run("TOKEN_FILE takes precedence over TOKEN", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		tokenPath := tmpDir + "/token"
+		if err := os.WriteFile(tokenPath, []byte("file-precedence-token  \r\n"), 0o600); err != nil {
+			t.Fatalf("failed writing token file: %v", err)
+		}
+
+		t.Setenv("TOKEN", "env-lower-precedence-token")
+		t.Setenv("TOKEN_FILE", tokenPath)
+
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		if cfg.Token != "file-precedence-token" {
+			t.Errorf("Token = %q, want %q", cfg.Token, "file-precedence-token")
+		}
+	})
+
+	t.Run("TOKEN_FILE not found returns error", func(t *testing.T) {
+		t.Setenv("TOKEN_FILE", "/nonexistent/path/to/token")
+		t.Setenv("TOKEN", "ignored-fallback-token")
+
+		cfg, err := Load()
+		if err == nil {
+			t.Fatalf("expected error for nonexistent TOKEN_FILE, got cfg: %+v", cfg)
+		}
+		if !strings.Contains(err.Error(), "reading TOKEN_FILE") {
+			t.Errorf("expected error mentioning 'reading TOKEN_FILE', got %v", err)
 		}
 	})
 }
