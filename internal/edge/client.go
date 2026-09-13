@@ -69,10 +69,14 @@ const (
 	maxStreamSessions = 100
 )
 
-// ExecSession tracks an active exec/terminal session
+// ExecSession tracks an active exec/terminal session. When Attach is set the session
+// is bound to the container's PID 1 stdio (no exec instance); resize then targets the
+// container, not an exec id.
 type ExecSession struct {
 	ExecID       string
 	DockerExecID string
+	ContainerID  string // set for attach sessions; used for resize
+	Attach       bool
 	Conn         *docker.HijackedConn
 	Cancel       context.CancelFunc
 }
@@ -976,42 +980,62 @@ func (c *Client) handleExecStart(msg *protocol.ExecStartMessage) {
 		return
 	}
 
-	log.Infof("Starting exec session: %s in container %s (cmd: %s, user: %s)", msg.ExecID, msg.ContainerID, msg.Cmd, msg.User)
-
 	ctx, cancel := context.WithCancel(context.Background())
 
-	// Create exec instance
-	log.Debugf("Creating Docker exec for session %s", msg.ExecID)
-	execResp, err := c.dockerClient.CreateExec(ctx, &docker.ExecConfig{
-		ContainerID: msg.ContainerID,
-		Cmd:         []string{msg.Cmd},
-		User:        msg.User,
-		Tty:         true,
-	})
-	if err != nil {
-		log.Errorf("Failed to create exec: %v", err)
-		c.sendJSON(protocol.NewErrorMessage(msg.ExecID, err.Error(), "EXEC_CREATE_ERROR"))
-		cancel()
-		return
-	}
+	var (
+		hijacked   *docker.HijackedConn
+		dockerExec string
+		err        error
+	)
 
-	log.Debugf("Created Docker exec: %s for session %s", execResp.ID, msg.ExecID)
+	if msg.Attach {
+		log.Infof("Starting attach session: %s to container %s", msg.ExecID, msg.ContainerID)
+		hijacked, err = c.dockerClient.StartContainerAttach(ctx, msg.ContainerID)
+		if err != nil {
+			log.Errorf("Failed to attach to container: %v", err)
+			c.sendJSON(protocol.NewErrorMessage(msg.ExecID, err.Error(), "ATTACH_START_ERROR"))
+			cancel()
+			return
+		}
+		log.Debugf("Attach successful for session %s", msg.ExecID)
+	} else {
+		log.Infof("Starting exec session: %s in container %s (cmd: %s, user: %s)", msg.ExecID, msg.ContainerID, msg.Cmd, msg.User)
 
-	// Start exec with hijack
-	log.Debugf("Starting exec attach for session %s", msg.ExecID)
-	hijacked, err := c.dockerClient.StartExecAttach(ctx, execResp.ID)
-	if err != nil {
-		log.Errorf("Failed to start exec: %v", err)
-		c.sendJSON(protocol.NewErrorMessage(msg.ExecID, err.Error(), "EXEC_START_ERROR"))
-		cancel()
-		return
+		// Create exec instance
+		log.Debugf("Creating Docker exec for session %s", msg.ExecID)
+		execResp, cerr := c.dockerClient.CreateExec(ctx, &docker.ExecConfig{
+			ContainerID: msg.ContainerID,
+			Cmd:         []string{msg.Cmd},
+			User:        msg.User,
+			Tty:         true,
+		})
+		if cerr != nil {
+			log.Errorf("Failed to create exec: %v", cerr)
+			c.sendJSON(protocol.NewErrorMessage(msg.ExecID, cerr.Error(), "EXEC_CREATE_ERROR"))
+			cancel()
+			return
+		}
+		dockerExec = execResp.ID
+		log.Debugf("Created Docker exec: %s for session %s", dockerExec, msg.ExecID)
+
+		// Start exec with hijack
+		log.Debugf("Starting exec attach for session %s", msg.ExecID)
+		hijacked, err = c.dockerClient.StartExecAttach(ctx, dockerExec)
+		if err != nil {
+			log.Errorf("Failed to start exec: %v", err)
+			c.sendJSON(protocol.NewErrorMessage(msg.ExecID, err.Error(), "EXEC_START_ERROR"))
+			cancel()
+			return
+		}
+		log.Debugf("Exec attach successful for session %s", msg.ExecID)
 	}
-	log.Debugf("Exec attach successful for session %s", msg.ExecID)
 
 	// Store session FIRST so resize/input messages don't fail
 	session := &ExecSession{
 		ExecID:       msg.ExecID,
-		DockerExecID: execResp.ID,
+		DockerExecID: dockerExec,
+		ContainerID:  msg.ContainerID,
+		Attach:       msg.Attach,
 		Conn:         hijacked,
 		Cancel:       cancel,
 	}
@@ -1027,9 +1051,7 @@ func (c *Client) handleExecStart(msg *protocol.ExecStartMessage) {
 
 	// Resize terminal to initial size (after session is stored)
 	if msg.Cols > 0 && msg.Rows > 0 {
-		if err := c.dockerClient.ResizeExec(ctx, execResp.ID, msg.Rows, msg.Cols); err != nil {
-			log.Warnf("Failed to resize exec: %v", err)
-		}
+		c.resizeSession(ctx, session, msg.Rows, msg.Cols)
 	}
 
 	// Start reading output from Docker
@@ -1138,8 +1160,20 @@ func (c *Client) handleExecResize(msg *protocol.ExecResizeMessage) {
 		return
 	}
 
-	if err := c.dockerClient.ResizeExec(context.Background(), session.DockerExecID, msg.Rows, msg.Cols); err != nil {
-		log.Warnf("Failed to resize exec: %v", err)
+	c.resizeSession(context.Background(), session, msg.Rows, msg.Cols)
+}
+
+// resizeSession resizes a session's terminal, targeting the container for attach
+// sessions and the exec instance otherwise.
+func (c *Client) resizeSession(ctx context.Context, session *ExecSession, rows, cols int) {
+	var err error
+	if session.Attach {
+		err = c.dockerClient.ResizeContainer(ctx, session.ContainerID, rows, cols)
+	} else {
+		err = c.dockerClient.ResizeExec(ctx, session.DockerExecID, rows, cols)
+	}
+	if err != nil {
+		log.Warnf("Failed to resize terminal: %v", err)
 	}
 }
 

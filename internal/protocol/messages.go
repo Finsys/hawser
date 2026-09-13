@@ -303,15 +303,19 @@ func ParseMessageType(data []byte) (string, error) {
 	return base.Type, nil
 }
 
-// ExecStartMessage requests starting an exec session
+// ExecStartMessage requests starting an exec session, or (when Attach is set) an
+// attach to the container's PID 1 stdio. Attach reuses the exec_input/exec_output/
+// exec_end machinery: the agent is a raw byte pipe and Dockhand does any stream
+// demultiplexing for non-TTY containers.
 type ExecStartMessage struct {
 	Type        string `json:"type"`
-	ExecID      string `json:"execId"`      // Unique ID for this exec session
-	ContainerID string `json:"containerId"` // Container to exec into
-	Cmd         string `json:"cmd"`         // Command to run (e.g., "/bin/sh")
-	User        string `json:"user"`        // User to run as
+	ExecID      string `json:"execId"`      // Unique ID for this session
+	ContainerID string `json:"containerId"` // Container to exec into / attach to
+	Cmd         string `json:"cmd"`         // Command to run (e.g., "/bin/sh"); ignored when Attach is set
+	User        string `json:"user"`        // User to run as; ignored when Attach is set
 	Cols        int    `json:"cols"`        // Initial terminal columns
 	Rows        int    `json:"rows"`        // Initial terminal rows
+	Attach      bool   `json:"attach,omitempty"` // Attach to the container's stdio instead of creating an exec
 }
 
 // ExecReadyMessage confirms exec session is ready
