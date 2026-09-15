@@ -1,7 +1,7 @@
 # Hawser
 
 <p align="center">
-  <img src="logo/hawser.png" alt="Hawser Logo" width="200">
+  <img src="logo/hawser.svg" alt="Hawser Logo" width="200">
 </p>
 
 [![GitHub Release](https://img.shields.io/github/v/release/Finsys/hawser?style=flat-square&logo=github)](https://github.com/Finsys/hawser/releases/latest)
