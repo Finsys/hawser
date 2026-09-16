@@ -105,6 +105,34 @@ func TestLoad_ComposeTimeout(t *testing.T) {
 	})
 }
 
+// TestLoad_MaxMessageSize verifies MaxMessageSizeMB defaults to 256 and can be
+// overridden via MAX_MESSAGE_SIZE_MB, so large git repos can deploy over edge (#1581).
+func TestLoad_MaxMessageSize(t *testing.T) {
+	t.Setenv("DOCKER_HOST", "tcp://localhost:2375")
+	t.Setenv("TOKEN", "test-token")
+
+	t.Run("defaults to 256 when unset", func(t *testing.T) {
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		if cfg.MaxMessageSizeMB != 256 {
+			t.Errorf("MaxMessageSizeMB = %d, want 256", cfg.MaxMessageSizeMB)
+		}
+	})
+
+	t.Run("overridden via MAX_MESSAGE_SIZE_MB", func(t *testing.T) {
+		t.Setenv("MAX_MESSAGE_SIZE_MB", "512")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		if cfg.MaxMessageSizeMB != 512 {
+			t.Errorf("MaxMessageSizeMB = %d, want 512", cfg.MaxMessageSizeMB)
+		}
+	})
+}
+
 func TestLoad_Token(t *testing.T) {
 	t.Setenv("DOCKER_HOST", "tcp://localhost:2375")
 

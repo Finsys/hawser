@@ -223,8 +223,14 @@ func (c *Client) connect() error {
 	c.conn = conn
 	c.mu.Unlock()
 
-	// Limit max inbound message size to 16 MB to prevent OOM from malicious server
-	conn.SetReadLimit(16 << 20)
+	// Limit max inbound message size to bound memory from a large (or malicious) payload.
+	// Configurable via MAX_MESSAGE_SIZE_MB (default 256, matching Dockhand's stack-files
+	// total limit) so large git repos can deploy over edge (#1581).
+	maxMessageBytes := int64(c.cfg.MaxMessageSizeMB) << 20
+	if maxMessageBytes <= 0 {
+		maxMessageBytes = 256 << 20
+	}
+	conn.SetReadLimit(maxMessageBytes)
 
 	// Send hello message
 	if err := c.sendHello(); err != nil {

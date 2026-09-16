@@ -198,6 +198,7 @@ DOCKER_SOCKET=/var/run/docker.sock
 # RECONNECT_DELAY=1
 # MAX_RECONNECT_DELAY=60
 # WELCOME_TIMEOUT=30
+# MAX_MESSAGE_SIZE_MB=256
 ```
 
 **Manual installation steps:**
@@ -481,6 +482,7 @@ Hawser is configured via environment variables:
 | `RECONNECT_DELAY` | Initial reconnect delay (Edge mode) | `1` |
 | `MAX_RECONNECT_DELAY` | Maximum reconnect delay | `60` |
 | `WELCOME_TIMEOUT` | Timeout in seconds waiting for welcome after hello (Edge mode) | `30` |
+| `MAX_MESSAGE_SIZE_MB` | Max inbound WebSocket message size in MiB (Edge mode). Bounds the stack-files payload a git deploy can send; raise for very large repos on a well-resourced agent, lower to cap memory on a small edge host. | `256` |
 | `LOG_LEVEL` | Logging level: `debug`, `info`, `warn`, `error` | `info` |
 | `SKIP_DF_COLLECTION` | Skip disk usage collection (see below) | - |
 

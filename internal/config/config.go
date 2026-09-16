@@ -42,6 +42,12 @@ type Config struct {
 	MaxReconnectDelay int // Max reconnect delay, default: 60
 	WelcomeTimeout    int // Timeout waiting for welcome message after hello, default: 30
 
+	// Max inbound WebSocket message size in MiB. Bounds the stack-files payload a
+	// git deploy can send (Dockhand allows up to 256 MiB total); raise for very large
+	// repos on a well-resourced agent, lower to cap memory on a small edge host.
+	// Default 256 (matches Dockhand's MAX_TOTAL_SIZE).
+	MaxMessageSizeMB int
+
 	// Logging
 	LogLevel string // debug, info, warn, error. Default: info
 
@@ -90,6 +96,7 @@ func Load() (*Config, error) {
 		ReconnectDelay:    getEnvInt("RECONNECT_DELAY", 1),
 		MaxReconnectDelay: getEnvInt("MAX_RECONNECT_DELAY", 60),
 		WelcomeTimeout:    getEnvInt("WELCOME_TIMEOUT", 30),
+		MaxMessageSizeMB:  getEnvInt("MAX_MESSAGE_SIZE_MB", 256),
 
 		// Logging
 		LogLevel: getEnvString("LOG_LEVEL", "info"),
