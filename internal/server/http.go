@@ -19,6 +19,7 @@ import (
 	"github.com/Finsys/hawser/internal/docker"
 	"github.com/Finsys/hawser/internal/log"
 	"github.com/Finsys/hawser/internal/pool"
+	"github.com/Finsys/hawser/internal/protocol"
 )
 
 // Server represents the Standard mode HTTP server
@@ -514,7 +515,7 @@ func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
 		"hawserVersion": hawserVersion,
 		"mode":          "standard",
 		"uptime":        uptime,
-		"capabilities":  []string{"exec", "metrics", "events", "compose", "git-sync-delete"},
+		"capabilities":  []string{"exec", "metrics", "events", "compose", "git-sync-delete", protocol.CapabilityComposeFileNames},
 	})
 }
 
