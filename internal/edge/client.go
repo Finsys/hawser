@@ -258,10 +258,7 @@ func (c *Client) sendHello() error {
 
 	hostname, _ := os.Hostname()
 
-	capabilities := []string{protocol.CapabilityExec, protocol.CapabilityMetrics, protocol.CapabilityEvents, protocol.CapabilityGitSyncDelete}
-	if c.compose.IsAvailable() {
-		capabilities = append(capabilities, protocol.CapabilityCompose)
-	}
+	capabilities := protocol.AgentCapabilities(c.compose.IsAvailable())
 
 	// Get hawser version from config (set at build time via ldflags)
 	hawserVersion := c.cfg.Version

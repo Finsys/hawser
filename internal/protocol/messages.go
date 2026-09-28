@@ -34,12 +34,24 @@ const (
 
 // Agent capabilities
 const (
-	CapabilityCompose       = "compose"         // Docker Compose support
-	CapabilityExec          = "exec"            // Interactive exec support
-	CapabilityMetrics       = "metrics"         // Host metrics collection
-	CapabilityEvents        = "events"          // Docker event streaming
-	CapabilityGitSyncDelete = "git-sync-delete" // Git deletion sync: hash-verified file removals (#966)
+	CapabilityCompose          = "compose"            // Docker Compose support
+	CapabilityExec             = "exec"               // Interactive exec support
+	CapabilityMetrics          = "metrics"            // Host metrics collection
+	CapabilityEvents           = "events"             // Docker event streaming
+	CapabilityGitSyncDelete    = "git-sync-delete"    // Git deletion sync: hash-verified file removals (#966)
+	CapabilityComposeFileNames = "compose-file-names" // Ordered multi-file compose (-f) via ComposeFileNames
 )
+
+// AgentCapabilities is the capability list both Standard (/_hawser/info) and
+// Edge (hello) advertise. Ordered multi-file compose is compiled in wherever
+// Compose is handled, so it rides along with the compose capability.
+func AgentCapabilities(compose bool) []string {
+	capabilities := []string{CapabilityExec, CapabilityMetrics, CapabilityEvents, CapabilityGitSyncDelete}
+	if compose {
+		capabilities = append(capabilities, CapabilityCompose, CapabilityComposeFileNames)
+	}
+	return capabilities
+}
 
 // BaseMessage is the common structure for all messages
 type BaseMessage struct {
@@ -49,8 +61,8 @@ type BaseMessage struct {
 // HelloMessage is sent by agent on connect
 type HelloMessage struct {
 	Type          string   `json:"type"`
-	Version       string   `json:"version"`         // Hawser agent version
-	Protocol      string   `json:"protocol"`        // Protocol version for compatibility
+	Version       string   `json:"version"`  // Hawser agent version
+	Protocol      string   `json:"protocol"` // Protocol version for compatibility
 	AgentID       string   `json:"agentId"`
 	AgentName     string   `json:"agentName"`
 	Token         string   `json:"token"`
@@ -101,8 +113,8 @@ type ResponseMessage struct {
 	RequestID  string            `json:"requestId"`
 	StatusCode int               `json:"statusCode"`
 	Headers    map[string]string `json:"headers,omitempty"`
-	Body       string            `json:"body,omitempty"`       // Base64-encoded for binary, plain string for JSON
-	IsBinary   bool              `json:"isBinary,omitempty"`   // True if Body is base64-encoded binary data
+	Body       string            `json:"body,omitempty"`     // Base64-encoded for binary, plain string for JSON
+	IsBinary   bool              `json:"isBinary,omitempty"` // True if Body is base64-encoded binary data
 }
 
 // NewResponseMessage creates a new response message
@@ -309,12 +321,12 @@ func ParseMessageType(data []byte) (string, error) {
 // demultiplexing for non-TTY containers.
 type ExecStartMessage struct {
 	Type        string `json:"type"`
-	ExecID      string `json:"execId"`      // Unique ID for this session
-	ContainerID string `json:"containerId"` // Container to exec into / attach to
-	Cmd         string `json:"cmd"`         // Command to run (e.g., "/bin/sh"); ignored when Attach is set
-	User        string `json:"user"`        // User to run as; ignored when Attach is set
-	Cols        int    `json:"cols"`        // Initial terminal columns
-	Rows        int    `json:"rows"`        // Initial terminal rows
+	ExecID      string `json:"execId"`           // Unique ID for this session
+	ContainerID string `json:"containerId"`      // Container to exec into / attach to
+	Cmd         string `json:"cmd"`              // Command to run (e.g., "/bin/sh"); ignored when Attach is set
+	User        string `json:"user"`             // User to run as; ignored when Attach is set
+	Cols        int    `json:"cols"`             // Initial terminal columns
+	Rows        int    `json:"rows"`             // Initial terminal rows
 	Attach      bool   `json:"attach,omitempty"` // Attach to the container's stdio instead of creating an exec
 }
 
