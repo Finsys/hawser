@@ -15,6 +15,7 @@ RUN apk add --no-cache \
     ca-certificates \
     docker-cli \
     docker-cli-compose \
+    git \
     wget \
     && mkdir -p /data/stacks
 

@@ -30,11 +30,22 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+// composeExecutor is the subset of *docker.ComposeClient that Client needs.
+// Declared here (not as the concrete type) so tests can substitute a fake
+// that never shells out to a real docker/docker-compose binary -- Execute
+// would otherwise depend on Docker being installed, which this package's
+// tests are meant to avoid (see docker.ComposeClient.Execute, and the one
+// intentionally-gated Docker-dependent test in internal/docker).
+type composeExecutor interface {
+	Execute(ctx context.Context, op *docker.ComposeOperation, onLine func(string)) (*docker.ComposeResult, error)
+	IsAvailable() bool
+}
+
 // Client represents the Edge mode WebSocket client
 type Client struct {
 	cfg          *config.Config
 	dockerClient *docker.Client
-	compose      *docker.ComposeClient
+	compose      composeExecutor
 	metrics      *metrics.Collector
 	conn         *websocket.Conn
 	mu           sync.Mutex
@@ -58,10 +69,14 @@ const (
 	maxStreamSessions = 100
 )
 
-// ExecSession tracks an active exec/terminal session
+// ExecSession tracks an active exec/terminal session. When Attach is set the session
+// is bound to the container's PID 1 stdio (no exec instance); resize then targets the
+// container, not an exec id.
 type ExecSession struct {
 	ExecID       string
 	DockerExecID string
+	ContainerID  string // set for attach sessions; used for resize
+	Attach       bool
 	Conn         *docker.HijackedConn
 	Cancel       context.CancelFunc
 }
@@ -76,7 +91,7 @@ type StreamContext struct {
 // Run starts the Edge mode client with auto-reconnect
 func Run(cfg *config.Config, stop <-chan os.Signal) error {
 	// Create Docker client
-	dockerClient, err := docker.NewClient(cfg.DockerSocket)
+	dockerClient, err := docker.NewClient(cfg.DockerSocket, cfg.RequestTimeout)
 	if err != nil {
 		return fmt.Errorf("failed to create Docker client: %w", err)
 	}
@@ -208,8 +223,14 @@ func (c *Client) connect() error {
 	c.conn = conn
 	c.mu.Unlock()
 
-	// Limit max inbound message size to 16 MB to prevent OOM from malicious server
-	conn.SetReadLimit(16 << 20)
+	// Limit max inbound message size to bound memory from a large (or malicious) payload.
+	// Configurable via MAX_MESSAGE_SIZE_MB (default 256, matching Dockhand's stack-files
+	// total limit) so large git repos can deploy over edge (#1581).
+	maxMessageBytes := int64(c.cfg.MaxMessageSizeMB) << 20
+	if maxMessageBytes <= 0 {
+		maxMessageBytes = 256 << 20
+	}
+	conn.SetReadLimit(maxMessageBytes)
 
 	// Send hello message
 	if err := c.sendHello(); err != nil {
@@ -377,6 +398,9 @@ func (c *Client) handleMessage(data []byte) {
 			log.Errorf("Failed to parse request: %v", err)
 			return
 		}
+		// Drop the raw frame now it's decoded into req; on a large compose payload this
+		// lets the GC reclaim it during handleRequest instead of pinning it (#1581).
+		data = nil
 		c.handleRequest(&req)
 
 	case protocol.TypePing:
@@ -436,6 +460,19 @@ func (c *Client) handleMessage(data []byte) {
 	}
 }
 
+// requestTimeout returns the context timeout to use for a non-streaming
+// request. Compose operations (up/down/pull) can legitimately run far longer
+// than a normal Docker API call — pulling images, recreating containers and
+// waiting on depends_on health checks routinely take minutes — so they get
+// their own timeout (ComposeTimeout, default 900s) instead of inheriting the
+// short RequestTimeout (default 30s) meant for ordinary Docker API calls.
+func (c *Client) requestTimeout(path string) time.Duration {
+	if path == "/_hawser/compose" {
+		return time.Duration(c.cfg.ComposeTimeout) * time.Second
+	}
+	return time.Duration(c.cfg.RequestTimeout) * time.Second
+}
+
 // handleRequest processes Docker API requests
 func (c *Client) handleRequest(req *protocol.RequestMessage) {
 	log.Infof("Docker API request: %s %s (streaming=%v)", req.Method, req.Path, req.Streaming)
@@ -452,8 +489,11 @@ func (c *Client) handleRequest(req *protocol.RequestMessage) {
 		return
 	}
 
-	// Non-streaming requests use a timeout context
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(c.cfg.RequestTimeout)*time.Second)
+	// Non-streaming requests use a timeout context. Compose operations get
+	// their own, separately configurable timeout (see requestTimeout) since
+	// image pulls, container recreation and depends_on health-check waits can
+	// legitimately run far longer than a normal Docker API call.
+	ctx, cancel := context.WithTimeout(context.Background(), c.requestTimeout(req.Path))
 	defer cancel()
 
 	// Check if this is a compose operation
@@ -575,6 +615,26 @@ func (c *Client) handleStreamingRequest(req *protocol.RequestMessage, headers ma
 	}
 }
 
+// annotateComposeTimeout rewrites result.Error to explicitly call out that
+// the compose operation was aborted because our own context timeout expired
+// — as opposed to a genuine compose failure (missing image, invalid compose
+// file, ...). When the context expires, exec.CommandContext kills the
+// docker-compose subprocess and cmd.Run() returns a generic error such as
+// "signal: killed"; Go's exec package never surfaces "context deadline
+// exceeded" through that error, so on its own it looks exactly like an
+// ordinary compose failure. ctx.Err() is the only reliable way to tell the
+// two apart. The original error/progress output is preserved, just no
+// longer left to stand alone as the (misleading) cause.
+func (c *Client) annotateComposeTimeout(ctx context.Context, result *docker.ComposeResult) {
+	if result.Success || !errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return
+	}
+	result.Error = fmt.Sprintf(
+		"compose operation aborted: exceeded the %ds COMPOSE_TIMEOUT (raise COMPOSE_TIMEOUT if this operation legitimately needs more time); underlying error: %s",
+		c.cfg.ComposeTimeout, result.Error,
+	)
+}
+
 // handleComposeRequest handles Docker Compose operations
 func (c *Client) handleComposeRequest(ctx context.Context, req *protocol.RequestMessage) {
 	var op docker.ComposeOperation
@@ -582,14 +642,35 @@ func (c *Client) handleComposeRequest(ctx context.Context, req *protocol.Request
 		c.sendJSON(protocol.NewErrorMessage(req.RequestID, err.Error(), "PARSE_ERROR"))
 		return
 	}
+	// Free the raw request body now that it's decoded into op; for a large stack-files
+	// payload this lets the GC reclaim it before the per-file base64 decode allocates,
+	// lowering peak memory (#1581).
+	req.Body = nil
 
 	log.Infof("Compose operation: %s on %s", op.Operation, op.ProjectName)
 
-	result, err := c.compose.Execute(ctx, &op)
+	// Only send per-line stream messages when the caller asked for them
+	// (op.StreamOutput). An older Dockhand never sets this field, so it must
+	// never receive a "stream" message for a compose request -- it wouldn't
+	// know what to do with one. onLine is invoked from two goroutines
+	// concurrently (see docker.ComposeClient.Execute's doc comment); it needs
+	// no extra locking here because it only forwards to c.sendJSON, which
+	// already serializes writes to the connection under c.mu.
+	var onLine func(string)
+	if op.StreamOutput {
+		onLine = func(line string) {
+			// Same call shape as handleStreamingRequest (client.go:567).
+			c.sendJSON(protocol.NewStreamMessage(req.RequestID, []byte(line), ""))
+		}
+	}
+
+	result, err := c.compose.Execute(ctx, &op, onLine)
 	if err != nil {
 		c.sendJSON(protocol.NewErrorMessage(req.RequestID, err.Error(), "COMPOSE_ERROR"))
 		return
 	}
+
+	c.annotateComposeTimeout(ctx, result)
 
 	respBody, _ := json.Marshal(result)
 	statusCode := http.StatusOK
@@ -912,42 +993,62 @@ func (c *Client) handleExecStart(msg *protocol.ExecStartMessage) {
 		return
 	}
 
-	log.Infof("Starting exec session: %s in container %s (cmd: %s, user: %s)", msg.ExecID, msg.ContainerID, msg.Cmd, msg.User)
-
 	ctx, cancel := context.WithCancel(context.Background())
 
-	// Create exec instance
-	log.Debugf("Creating Docker exec for session %s", msg.ExecID)
-	execResp, err := c.dockerClient.CreateExec(ctx, &docker.ExecConfig{
-		ContainerID: msg.ContainerID,
-		Cmd:         []string{msg.Cmd},
-		User:        msg.User,
-		Tty:         true,
-	})
-	if err != nil {
-		log.Errorf("Failed to create exec: %v", err)
-		c.sendJSON(protocol.NewErrorMessage(msg.ExecID, err.Error(), "EXEC_CREATE_ERROR"))
-		cancel()
-		return
-	}
+	var (
+		hijacked   *docker.HijackedConn
+		dockerExec string
+		err        error
+	)
 
-	log.Debugf("Created Docker exec: %s for session %s", execResp.ID, msg.ExecID)
+	if msg.Attach {
+		log.Infof("Starting attach session: %s to container %s", msg.ExecID, msg.ContainerID)
+		hijacked, err = c.dockerClient.StartContainerAttach(ctx, msg.ContainerID)
+		if err != nil {
+			log.Errorf("Failed to attach to container: %v", err)
+			c.sendJSON(protocol.NewErrorMessage(msg.ExecID, err.Error(), "ATTACH_START_ERROR"))
+			cancel()
+			return
+		}
+		log.Debugf("Attach successful for session %s", msg.ExecID)
+	} else {
+		log.Infof("Starting exec session: %s in container %s (cmd: %s, user: %s)", msg.ExecID, msg.ContainerID, msg.Cmd, msg.User)
 
-	// Start exec with hijack
-	log.Debugf("Starting exec attach for session %s", msg.ExecID)
-	hijacked, err := c.dockerClient.StartExecAttach(ctx, execResp.ID)
-	if err != nil {
-		log.Errorf("Failed to start exec: %v", err)
-		c.sendJSON(protocol.NewErrorMessage(msg.ExecID, err.Error(), "EXEC_START_ERROR"))
-		cancel()
-		return
+		// Create exec instance
+		log.Debugf("Creating Docker exec for session %s", msg.ExecID)
+		execResp, cerr := c.dockerClient.CreateExec(ctx, &docker.ExecConfig{
+			ContainerID: msg.ContainerID,
+			Cmd:         []string{msg.Cmd},
+			User:        msg.User,
+			Tty:         true,
+		})
+		if cerr != nil {
+			log.Errorf("Failed to create exec: %v", cerr)
+			c.sendJSON(protocol.NewErrorMessage(msg.ExecID, cerr.Error(), "EXEC_CREATE_ERROR"))
+			cancel()
+			return
+		}
+		dockerExec = execResp.ID
+		log.Debugf("Created Docker exec: %s for session %s", dockerExec, msg.ExecID)
+
+		// Start exec with hijack
+		log.Debugf("Starting exec attach for session %s", msg.ExecID)
+		hijacked, err = c.dockerClient.StartExecAttach(ctx, dockerExec)
+		if err != nil {
+			log.Errorf("Failed to start exec: %v", err)
+			c.sendJSON(protocol.NewErrorMessage(msg.ExecID, err.Error(), "EXEC_START_ERROR"))
+			cancel()
+			return
+		}
+		log.Debugf("Exec attach successful for session %s", msg.ExecID)
 	}
-	log.Debugf("Exec attach successful for session %s", msg.ExecID)
 
 	// Store session FIRST so resize/input messages don't fail
 	session := &ExecSession{
 		ExecID:       msg.ExecID,
-		DockerExecID: execResp.ID,
+		DockerExecID: dockerExec,
+		ContainerID:  msg.ContainerID,
+		Attach:       msg.Attach,
 		Conn:         hijacked,
 		Cancel:       cancel,
 	}
@@ -963,9 +1064,7 @@ func (c *Client) handleExecStart(msg *protocol.ExecStartMessage) {
 
 	// Resize terminal to initial size (after session is stored)
 	if msg.Cols > 0 && msg.Rows > 0 {
-		if err := c.dockerClient.ResizeExec(ctx, execResp.ID, msg.Rows, msg.Cols); err != nil {
-			log.Warnf("Failed to resize exec: %v", err)
-		}
+		c.resizeSession(ctx, session, msg.Rows, msg.Cols)
 	}
 
 	// Start reading output from Docker
@@ -1074,8 +1173,20 @@ func (c *Client) handleExecResize(msg *protocol.ExecResizeMessage) {
 		return
 	}
 
-	if err := c.dockerClient.ResizeExec(context.Background(), session.DockerExecID, msg.Rows, msg.Cols); err != nil {
-		log.Warnf("Failed to resize exec: %v", err)
+	c.resizeSession(context.Background(), session, msg.Rows, msg.Cols)
+}
+
+// resizeSession resizes a session's terminal, targeting the container for attach
+// sessions and the exec instance otherwise.
+func (c *Client) resizeSession(ctx context.Context, session *ExecSession, rows, cols int) {
+	var err error
+	if session.Attach {
+		err = c.dockerClient.ResizeContainer(ctx, session.ContainerID, rows, cols)
+	} else {
+		err = c.dockerClient.ResizeExec(ctx, session.DockerExecID, rows, cols)
+	}
+	if err != nil {
+		log.Warnf("Failed to resize terminal: %v", err)
 	}
 }
 

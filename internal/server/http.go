@@ -33,7 +33,7 @@ type Server struct {
 // Run starts the Standard mode HTTP server
 func Run(cfg *config.Config, stop <-chan os.Signal) error {
 	// Create Docker client
-	dockerClient, err := docker.NewClient(cfg.DockerSocket)
+	dockerClient, err := docker.NewClient(cfg.DockerSocket, cfg.RequestTimeout)
 	if err != nil {
 		return fmt.Errorf("failed to create Docker client: %w", err)
 	}
@@ -543,7 +543,7 @@ func (s *Server) handleCompose(w http.ResponseWriter, r *http.Request) {
 
 	log.Debugf("Compose operation: %s on %s", op.Operation, op.ProjectName)
 
-	result, err := s.compose.Execute(r.Context(), &op)
+	result, err := s.compose.Execute(r.Context(), &op, nil) // nil: REST has no channel for streamed lines
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(docker.ComposeResult{

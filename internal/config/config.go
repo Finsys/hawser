@@ -15,6 +15,7 @@ type Config struct {
 	// Edge Mode (active connection to Dockhand)
 	DockhandServerURL string // e.g., wss://dockhand.example.com/api/hawser/connect
 	Token             string // Agent authentication token
+	TokenFile         string // Optional path to token file (takes precedence over TOKEN)
 	CACert            string // Optional CA certificate path (for self-signed Dockhand)
 	TLSSkipVerify     bool   // Skip TLS verification (insecure, for testing)
 
@@ -35,10 +36,17 @@ type Config struct {
 
 	// Timeouts and intervals (seconds)
 	HeartbeatInterval int // Default: 30
-	RequestTimeout    int // Default: 30
+	RequestTimeout    int // Default: 30 (raise via REQUEST_TIMEOUT for slow storage, e.g. ZFS syncfs)
+	ComposeTimeout    int // Default: 900 (compose operations can run far longer than a normal request)
 	ReconnectDelay    int // Initial reconnect delay, default: 1
 	MaxReconnectDelay int // Max reconnect delay, default: 60
 	WelcomeTimeout    int // Timeout waiting for welcome message after hello, default: 30
+
+	// Max inbound WebSocket message size in MiB. Bounds the stack-files payload a
+	// git deploy can send (Dockhand allows up to 256 MiB total); raise for very large
+	// repos on a well-resourced agent, lower to cap memory on a small edge host.
+	// Default 256 (matches Dockhand's MAX_TOTAL_SIZE).
+	MaxMessageSizeMB int
 
 	// Logging
 	LogLevel string // debug, info, warn, error. Default: info
@@ -53,10 +61,16 @@ type Config struct {
 
 // Load reads configuration from environment variables and flags
 func Load() (*Config, error) {
+	token, err := loadToken()
+	if err != nil {
+		return nil, err
+	}
+
 	cfg := &Config{
 		// Edge mode
 		DockhandServerURL: os.Getenv("DOCKHAND_SERVER_URL"),
-		Token:             os.Getenv("TOKEN"),
+		Token:             token,
+		TokenFile:         os.Getenv("TOKEN_FILE"),
 		CACert:            os.Getenv("CA_CERT"),
 		TLSSkipVerify:     getEnvBool("TLS_SKIP_VERIFY", false),
 
@@ -78,9 +92,11 @@ func Load() (*Config, error) {
 		// Timeouts
 		HeartbeatInterval: getEnvInt("HEARTBEAT_INTERVAL", 30),
 		RequestTimeout:    getEnvInt("REQUEST_TIMEOUT", 30),
+		ComposeTimeout:    getEnvInt("COMPOSE_TIMEOUT", 900),
 		ReconnectDelay:    getEnvInt("RECONNECT_DELAY", 1),
 		MaxReconnectDelay: getEnvInt("MAX_RECONNECT_DELAY", 60),
 		WelcomeTimeout:    getEnvInt("WELCOME_TIMEOUT", 30),
+		MaxMessageSizeMB:  getEnvInt("MAX_MESSAGE_SIZE_MB", 256),
 
 		// Logging
 		LogLevel: getEnvString("LOG_LEVEL", "info"),
@@ -232,4 +248,18 @@ func getEnvBool(key string, defaultValue bool) bool {
 		}
 	}
 	return defaultValue
+}
+
+// loadToken returns the authentication token.
+// If TOKEN_FILE is set, its contents are read and trimmed, taking precedence over TOKEN.
+// Otherwise, it falls back to the TOKEN environment variable.
+func loadToken() (string, error) {
+	if tokenFile := os.Getenv("TOKEN_FILE"); tokenFile != "" {
+		data, err := os.ReadFile(tokenFile)
+		if err != nil {
+			return "", fmt.Errorf("reading TOKEN_FILE %q: %w", tokenFile, err)
+		}
+		return strings.TrimSpace(string(data)), nil
+	}
+	return os.Getenv("TOKEN"), nil
 }

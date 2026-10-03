@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -34,8 +35,14 @@ func (c *Client) GetSocketPath() string {
 	return c.socketPath
 }
 
-// NewClient creates a new Docker client
-func NewClient(socketPath string) (*Client, error) {
+// NewClient creates a new Docker client. requestTimeout (seconds) bounds every
+// non-streaming Docker API call; pass cfg.RequestTimeout so REQUEST_TIMEOUT is
+// honored (slow storage can make /containers/create exceed the old fixed 30s and
+// strand an update). A value <= 0 falls back to the 30s default.
+func NewClient(socketPath string, requestTimeout int) (*Client, error) {
+	if requestTimeout <= 0 {
+		requestTimeout = 30
+	}
 	// Create HTTP transport for Unix socket
 	transport := &http.Transport{
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
@@ -60,7 +67,7 @@ func NewClient(socketPath string) (*Client, error) {
 		socketPath: socketPath,
 		httpClient: &http.Client{
 			Transport: transport,
-			Timeout:   30 * time.Second,
+			Timeout:   time.Duration(requestTimeout) * time.Second,
 		},
 		streamClient: &http.Client{
 			Transport: streamTransport,
@@ -306,6 +313,30 @@ type HijackedConn struct {
 
 // StartExecAttach starts an exec instance and returns a hijacked connection
 func (c *Client) StartExecAttach(ctx context.Context, execID string) (*HijackedConn, error) {
+	path := fmt.Sprintf("/%s/exec/%s/start", c.apiVersion, execID)
+	return c.hijack(path, `{"Detach":false,"Tty":true}`)
+}
+
+// StartContainerAttach attaches to a running container's PID 1 stdio and returns a
+// hijacked connection. Unlike exec, the output may be multiplexed (8-byte stream
+// headers) for non-TTY containers; the demultiplexing is done by Dockhand, so the
+// agent just pipes the raw bytes.
+func (c *Client) StartContainerAttach(ctx context.Context, containerID string) (*HijackedConn, error) {
+	// Attach has no request body; the upgrade headers carry everything.
+	return c.hijack(containerAttachPath(c.apiVersion, containerID), "")
+}
+
+// containerAttachPath builds the raw attach request path. The id is path-escaped:
+// the hijack request line is written directly to the socket and does NOT pass
+// through net/http's url parser, which would otherwise reject CRLF/path injection.
+func containerAttachPath(apiVersion, containerID string) string {
+	return fmt.Sprintf("/%s/containers/%s/attach?stream=1&stdin=1&stdout=1&stderr=1", apiVersion, url.PathEscape(containerID))
+}
+
+// hijack sends a POST that upgrades the Unix-socket connection to a raw bidirectional
+// stream, parses the HTTP response headers, and returns the hijacked connection with
+// any bytes already read past the headers. Shared by exec-start and container-attach.
+func (c *Client) hijack(path, body string) (*HijackedConn, error) {
 	// Connect directly to the Unix socket
 	conn, err := net.Dial("unix", c.socketPath)
 	if err != nil {
@@ -316,8 +347,6 @@ func (c *Client) StartExecAttach(ctx context.Context, execID string) (*HijackedC
 	conn.SetReadDeadline(time.Now().Add(30 * time.Second))
 
 	// Build the HTTP request manually for hijacking
-	path := fmt.Sprintf("/%s/exec/%s/start", c.apiVersion, execID)
-	body := `{"Detach":false,"Tty":true}`
 	request := fmt.Sprintf(
 		"POST %s HTTP/1.1\r\n"+
 			"Host: localhost\r\n"+
@@ -333,7 +362,7 @@ func (c *Client) StartExecAttach(ctx context.Context, execID string) (*HijackedC
 	// Send the request
 	if _, err := conn.Write([]byte(request)); err != nil {
 		conn.Close()
-		return nil, fmt.Errorf("failed to send exec start request: %w", err)
+		return nil, fmt.Errorf("failed to send hijack request: %w", err)
 	}
 
 	// Read HTTP response headers - we need to read until we find the end of headers (\r\n\r\n)
@@ -346,7 +375,7 @@ func (c *Client) StartExecAttach(ctx context.Context, execID string) (*HijackedC
 		n, err := conn.Read(tempBuf)
 		if err != nil {
 			conn.Close()
-			return nil, fmt.Errorf("failed to read exec start response: %w", err)
+			return nil, fmt.Errorf("failed to read hijack response: %w", err)
 		}
 		headerBuf = append(headerBuf, tempBuf[:n]...)
 
@@ -364,12 +393,12 @@ func (c *Client) StartExecAttach(ctx context.Context, execID string) (*HijackedC
 	}
 
 	response := string(headerBuf[:headerEnd])
-	log.Debugf("Exec start response: %s", strings.Split(response, "\r\n")[0])
+	log.Debugf("Hijack response: %s", strings.Split(response, "\r\n")[0])
 
 	// Check for successful upgrade (101 Switching Protocols, 101 UPGRADED) or 200 OK
 	if !strings.Contains(response, "101 ") && !strings.Contains(response, "200 OK") {
 		conn.Close()
-		return nil, fmt.Errorf("exec start failed: %s", response)
+		return nil, fmt.Errorf("hijack failed: %s", response)
 	}
 
 	// Check if we read any data beyond the headers (leftover data after \r\n\r\n)
@@ -389,7 +418,15 @@ func (c *Client) StartExecAttach(ctx context.Context, execID string) (*HijackedC
 
 // ResizeExec resizes the exec terminal
 func (c *Client) ResizeExec(ctx context.Context, execID string, height, width int) error {
-	path := fmt.Sprintf("/exec/%s/resize?h=%d&w=%d", execID, height, width)
+	return c.resize(ctx, fmt.Sprintf("/exec/%s/resize?h=%d&w=%d", execID, height, width))
+}
+
+// ResizeContainer resizes an attached container's TTY.
+func (c *Client) ResizeContainer(ctx context.Context, containerID string, height, width int) error {
+	return c.resize(ctx, fmt.Sprintf("/containers/%s/resize?h=%d&w=%d", url.PathEscape(containerID), height, width))
+}
+
+func (c *Client) resize(ctx context.Context, path string) error {
 	resp, err := c.Request(ctx, "POST", path, nil, nil)
 	if err != nil {
 		return err

@@ -1,6 +1,10 @@
 package config
 
-import "testing"
+import (
+	"os"
+	"strings"
+	"testing"
+)
 
 func TestIsLoopbackBind(t *testing.T) {
 	cases := map[string]bool{
@@ -69,4 +73,136 @@ func TestValidate_EdgeMode_Unaffected(t *testing.T) {
 	if err := cfg.validate(); err != nil {
 		t.Fatalf("edge-mode validate() unexpected error: %v", err)
 	}
+}
+
+// TestLoad_ComposeTimeout verifies ComposeTimeout defaults to 900s and can be
+// overridden via COMPOSE_TIMEOUT, mirroring how RequestTimeout already
+// behaves. DOCKER_HOST is set so Load() skips the local docker-socket
+// existence check, isolating the timeout-parsing behavior under test.
+func TestLoad_ComposeTimeout(t *testing.T) {
+	t.Setenv("DOCKER_HOST", "tcp://localhost:2375")
+	t.Setenv("TOKEN", "test-token")
+
+	t.Run("defaults to 900 when unset", func(t *testing.T) {
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		if cfg.ComposeTimeout != 900 {
+			t.Errorf("ComposeTimeout = %d, want 900", cfg.ComposeTimeout)
+		}
+	})
+
+	t.Run("overridden via COMPOSE_TIMEOUT", func(t *testing.T) {
+		t.Setenv("COMPOSE_TIMEOUT", "120")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		if cfg.ComposeTimeout != 120 {
+			t.Errorf("ComposeTimeout = %d, want 120", cfg.ComposeTimeout)
+		}
+	})
+}
+
+// TestLoad_MaxMessageSize verifies MaxMessageSizeMB defaults to 256 and can be
+// overridden via MAX_MESSAGE_SIZE_MB, so large git repos can deploy over edge (#1581).
+func TestLoad_MaxMessageSize(t *testing.T) {
+	t.Setenv("DOCKER_HOST", "tcp://localhost:2375")
+	t.Setenv("TOKEN", "test-token")
+
+	t.Run("defaults to 256 when unset", func(t *testing.T) {
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		if cfg.MaxMessageSizeMB != 256 {
+			t.Errorf("MaxMessageSizeMB = %d, want 256", cfg.MaxMessageSizeMB)
+		}
+	})
+
+	t.Run("overridden via MAX_MESSAGE_SIZE_MB", func(t *testing.T) {
+		t.Setenv("MAX_MESSAGE_SIZE_MB", "512")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		if cfg.MaxMessageSizeMB != 512 {
+			t.Errorf("MaxMessageSizeMB = %d, want 512", cfg.MaxMessageSizeMB)
+		}
+	})
+}
+
+func TestLoad_Token(t *testing.T) {
+	t.Setenv("DOCKER_HOST", "tcp://localhost:2375")
+
+	t.Run("token loaded from TOKEN env var", func(t *testing.T) {
+		t.Setenv("TOKEN", "env-secret-token")
+		t.Setenv("TOKEN_FILE", "")
+
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		if cfg.Token != "env-secret-token" {
+			t.Errorf("Token = %q, want %q", cfg.Token, "env-secret-token")
+		}
+		if cfg.TokenFile != "" {
+			t.Errorf("TokenFile = %q, want empty", cfg.TokenFile)
+		}
+	})
+
+	t.Run("token loaded from TOKEN_FILE", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		tokenPath := tmpDir + "/token"
+		if err := os.WriteFile(tokenPath, []byte("file-secret-token\n"), 0o600); err != nil {
+			t.Fatalf("failed writing token file: %v", err)
+		}
+
+		t.Setenv("TOKEN", "")
+		t.Setenv("TOKEN_FILE", tokenPath)
+
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		if cfg.Token != "file-secret-token" {
+			t.Errorf("Token = %q, want %q", cfg.Token, "file-secret-token")
+		}
+		if cfg.TokenFile != tokenPath {
+			t.Errorf("TokenFile = %q, want %q", cfg.TokenFile, tokenPath)
+		}
+	})
+
+	t.Run("TOKEN_FILE takes precedence over TOKEN", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		tokenPath := tmpDir + "/token"
+		if err := os.WriteFile(tokenPath, []byte("file-precedence-token  \r\n"), 0o600); err != nil {
+			t.Fatalf("failed writing token file: %v", err)
+		}
+
+		t.Setenv("TOKEN", "env-lower-precedence-token")
+		t.Setenv("TOKEN_FILE", tokenPath)
+
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		if cfg.Token != "file-precedence-token" {
+			t.Errorf("Token = %q, want %q", cfg.Token, "file-precedence-token")
+		}
+	})
+
+	t.Run("TOKEN_FILE not found returns error", func(t *testing.T) {
+		t.Setenv("TOKEN_FILE", "/nonexistent/path/to/token")
+		t.Setenv("TOKEN", "ignored-fallback-token")
+
+		cfg, err := Load()
+		if err == nil {
+			t.Fatalf("expected error for nonexistent TOKEN_FILE, got cfg: %+v", cfg)
+		}
+		if !strings.Contains(err.Error(), "reading TOKEN_FILE") {
+			t.Errorf("expected error mentioning 'reading TOKEN_FILE', got %v", err)
+		}
+	})
 }

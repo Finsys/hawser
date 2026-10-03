@@ -1,7 +1,7 @@
 # Hawser
 
 <p align="center">
-  <img src="logo/hawser.png" alt="Hawser Logo" width="200">
+  <img src="logo/hawser.svg" alt="Hawser Logo" width="200">
 </p>
 
 [![GitHub Release](https://img.shields.io/github/v/release/Finsys/hawser?style=flat-square&logo=github)](https://github.com/Finsys/hawser/releases/latest)
@@ -193,9 +193,12 @@ DOCKER_SOCKET=/var/run/docker.sock
 
 # Connection settings (optional)
 # HEARTBEAT_INTERVAL=30
+# REQUEST_TIMEOUT=30
+# COMPOSE_TIMEOUT=900
 # RECONNECT_DELAY=1
 # MAX_RECONNECT_DELAY=60
 # WELCOME_TIMEOUT=30
+# MAX_MESSAGE_SIZE_MB=256
 ```
 
 **Manual installation steps:**
@@ -461,6 +464,7 @@ Hawser is configured via environment variables:
 |----------|-------------|---------|
 | `DOCKHAND_SERVER_URL` | WebSocket URL for Edge mode | - |
 | `TOKEN` | Authentication token. Required in Edge mode, and in Standard mode when binding a non-loopback address. | - |
+| `TOKEN_FILE` | Path to a file containing the authentication token (takes precedence over `TOKEN`, e.g., for Docker Secrets). | - |
 | `CA_CERT` | Path to CA certificate for Edge mode (self-signed Dockhand) | - |
 | `TLS_SKIP_VERIFY` | Skip TLS verification for Edge mode (insecure) | `false` |
 | `PORT` | HTTP server port (Standard mode) | `2376` |
@@ -473,10 +477,12 @@ Hawser is configured via environment variables:
 | `AGENT_ID` | Unique agent identifier | Auto-generated UUID |
 | `AGENT_NAME` | Human-readable agent name | Hostname |
 | `HEARTBEAT_INTERVAL` | Heartbeat interval in seconds | `30` |
-| `REQUEST_TIMEOUT` | Request timeout in seconds | `30` |
+| `REQUEST_TIMEOUT` | Request timeout in seconds (raise for slow storage such as ZFS syncfs, which can make a container recreate exceed 30s) | `30` |
+| `COMPOSE_TIMEOUT` | Compose operation timeout in seconds (up/down/pull can run far longer than a normal request) | `900` |
 | `RECONNECT_DELAY` | Initial reconnect delay (Edge mode) | `1` |
 | `MAX_RECONNECT_DELAY` | Maximum reconnect delay | `60` |
 | `WELCOME_TIMEOUT` | Timeout in seconds waiting for welcome after hello (Edge mode) | `30` |
+| `MAX_MESSAGE_SIZE_MB` | Max inbound WebSocket message size in MiB (Edge mode). Bounds the stack-files payload a git deploy can send; raise for very large repos on a well-resourced agent, lower to cap memory on a small edge host. | `256` |
 | `LOG_LEVEL` | Logging level: `debug`, `info`, `warn`, `error` | `info` |
 | `SKIP_DF_COLLECTION` | Skip disk usage collection (see below) | - |
 
