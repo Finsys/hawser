@@ -8,10 +8,22 @@ hawser_mode: "standard"
 # Standard mode: port to listen on
 hawser_port: 2376
 
+# Standard mode: address to bind ("0.0.0.0" = all interfaces)
+hawser_bind_address: "0.0.0.0"
+
+# Standard mode: allow binding a non-loopback address without a token (INSECURE)
+hawser_allow_insecure_no_auth: false
+
 # Authentication token (required)
 hawser_token: ""
 
-# Agent display name in Dockhand
+# Path to a file containing the token — takes precedence over hawser_token
+hawser_token_file: ""
+
+# Agent ID (empty = auto-generated UUID)
+hawser_agent_id: ""
+
+# Agent display name in Dockhand (empty = target hostname)
 hawser_agent_name: "{{ inventory_hostname }}"
 
 # Edge mode: Dockhand WebSocket URL (required for edge mode)
@@ -27,6 +39,25 @@ hawser_tls_key: ""
 # TLS for edge mode
 hawser_tls_skip_verify: false
 hawser_ca_cert: ""
+
+# Docker connection
+# (empty socket = auto-detect; docker_host overrides the socket entirely)
+hawser_docker_socket: ""
+hawser_docker_host: ""
+
+# Timeouts and intervals (seconds)
+hawser_heartbeat_interval: 30
+hawser_request_timeout: 30
+hawser_compose_timeout: 900
+hawser_reconnect_delay: 1
+hawser_max_reconnect_delay: 60
+hawser_welcome_timeout: 30
+
+# Max inbound WebSocket message size (MiB)
+hawser_max_message_size_mb: 256
+
+# Stack files directory
+hawser_stacks_dir: "/data/stacks"
 
 # Installation paths
 hawser_install_dir: "/usr/local/bin"
