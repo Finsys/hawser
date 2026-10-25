@@ -28,6 +28,9 @@ hawser_tls_key: ""
 hawser_tls_skip_verify: false
 hawser_ca_cert: ""
 
+# Stack files directory (STACKS_DIR); the unit makes it writable
+hawser_stacks_dir: "/data/stacks"
+
 # Installation paths
 hawser_install_dir: "/usr/local/bin"
 

@@ -37,6 +37,7 @@ All variables are optional except `hawser_token`.
 | `hawser_tls_key` | — | TLS key path (standard mode) |
 | `hawser_tls_skip_verify` | `false` | Skip TLS verification (edge mode) |
 | `hawser_ca_cert` | — | CA cert path for self-signed Dockhand (edge mode) |
+| `hawser_stacks_dir` | `/data/stacks` | Stack files directory; created if missing and the only writable path the unit allows |
 | `hawser_install_dir` | `/usr/local/bin` | Binary install path |
 | `hawser_user` | `root` | Service user |
 | `hawser_group` | `docker` | Service group (needs Docker socket access) |

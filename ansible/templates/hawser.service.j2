@@ -25,6 +25,7 @@ RuntimeDirectory=hawser
 Environment=DOCKER_CONFIG=/run/hawser TMPDIR=/run/hawser
 PrivateTmp=true
 ReadOnlyPaths=/
+ReadWritePaths="{{ hawser_stacks_dir }}"
 
 [Install]
 WantedBy=multi-user.target

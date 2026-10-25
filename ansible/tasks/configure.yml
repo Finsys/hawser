@@ -5,6 +5,14 @@
     state: present
   when: hawser_group != "root"
 
+- name: Ensure stacks directory exists
+  ansible.builtin.file:
+    path: "{{ hawser_stacks_dir }}"
+    state: directory
+    owner: "{{ hawser_user }}"
+    group: "{{ hawser_group }}"
+    mode: "0750"
+
 - name: Deploy environment file
   ansible.builtin.template:
     src: hawser.env.j2
