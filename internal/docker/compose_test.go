@@ -250,3 +250,29 @@ func TestBuildOperationArgs(t *testing.T) {
 		}
 	}
 }
+
+func TestInheritedEnv(t *testing.T) {
+	host := map[string]string{
+		"PATH":          "/usr/bin",
+		"USER":          "root",
+		"DOCKER_CONFIG": "/run/hawser",
+		"TMPDIR":        "/run/hawser",
+		"LD_PRELOAD":    "/evil.so",
+		"DOCKER_HOST":   "tcp://elsewhere:2375",
+	}
+	lookup := func(k string) (string, bool) { v, ok := host[k]; return v, ok }
+
+	got := inheritedEnv(lookup)
+	want := []string{"PATH=/usr/bin", "USER=root", "DOCKER_CONFIG=/run/hawser", "TMPDIR=/run/hawser"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("inheritedEnv = %v, want %v", got, want)
+	}
+
+	// The released unit sets no HOME; compose must not get one invented for it, or
+	// ${HOME} in a compose file would resolve to a different path.
+	for _, kv := range got {
+		if strings.HasPrefix(kv, "HOME=") {
+			t.Fatalf("HOME passed although the host has none: %v", got)
+		}
+	}
+}

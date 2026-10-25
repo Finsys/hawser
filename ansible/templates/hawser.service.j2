@@ -20,6 +20,9 @@ StartLimitBurst=5
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
+# docker login, compose and buildx need a writable config dir and temp dir; /run/hawser is tmpfs.
+RuntimeDirectory=hawser
+Environment=DOCKER_CONFIG=/run/hawser TMPDIR=/run/hawser
 PrivateTmp=true
 ReadOnlyPaths=/
 

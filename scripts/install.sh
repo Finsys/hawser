@@ -140,6 +140,10 @@ EnvironmentFile=/etc/hawser/config
 NoNewPrivileges=false
 ProtectSystem=strict
 ProtectHome=true
+# docker login, compose and buildx need a writable config dir and temp dir, which the
+# two lines above take away. /run/hawser is tmpfs: registry logins never reach the disk.
+RuntimeDirectory=hawser
+Environment=DOCKER_CONFIG=/run/hawser TMPDIR=/run/hawser
 ReadWritePaths=/var/run/docker.sock -${STACKS_DIR}
 
 [Install]

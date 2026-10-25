@@ -41,6 +41,22 @@ var deniedEnvKeys = map[string]bool{
 	"IFS":             true,
 }
 
+// inheritedEnvKeys are the agent's own variables a compose command keeps. DOCKER_CONFIG
+// keeps compose on the config docker login just wrote to; TMPDIR gives it a writable
+// temp dir where /tmp is read-only (the systemd unit points both at /run/hawser).
+var inheritedEnvKeys = []string{"PATH", "HOME", "USER", "DOCKER_CONFIG", "TMPDIR"}
+
+// inheritedEnv returns KEY=value for each inheritedEnvKeys entry that lookup finds.
+func inheritedEnv(lookup func(string) (string, bool)) []string {
+	var env []string
+	for _, key := range inheritedEnvKeys {
+		if val, ok := lookup(key); ok {
+			env = append(env, key+"="+val)
+		}
+	}
+	return env
+}
+
 // ComposeClient handles Docker Compose operations
 type ComposeClient struct {
 	dockerSocket   string
@@ -181,7 +197,7 @@ func (c *ComposeClient) loginToRegistries(ctx context.Context, registries []Regi
 		cmd.Stderr = &stderr
 
 		if err := cmd.Run(); err != nil {
-			log.Debugf("Compose: Failed to login to %s: %s", registryHost, stderr.String())
+			log.Warnf("Compose: Failed to login to %s: %s", registryHost, strings.TrimSpace(stderr.String()))
 		} else {
 			log.Debugf("Compose: Successfully logged into %s", registryHost)
 		}
@@ -529,11 +545,7 @@ func (c *ComposeClient) Execute(ctx context.Context, op *ComposeOperation, onLin
 	cmd.Env = []string{
 		fmt.Sprintf("DOCKER_HOST=unix://%s", c.dockerSocket),
 	}
-	for _, key := range []string{"PATH", "HOME", "USER"} {
-		if val, ok := os.LookupEnv(key); ok {
-			cmd.Env = append(cmd.Env, key+"="+val)
-		}
-	}
+	cmd.Env = append(cmd.Env, inheritedEnv(os.LookupEnv)...)
 
 	// Set API version for compatibility with newer Docker daemons
 	// This allows older docker CLI to work with newer daemons

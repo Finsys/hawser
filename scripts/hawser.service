@@ -21,6 +21,10 @@ SyslogIdentifier=hawser
 NoNewPrivileges=false
 ProtectSystem=strict
 ProtectHome=true
+# docker login, compose and buildx need a writable config dir and temp dir, which the
+# two lines above take away. /run/hawser is tmpfs: registry logins never reach the disk.
+RuntimeDirectory=hawser
+Environment=DOCKER_CONFIG=/run/hawser TMPDIR=/run/hawser
 # The stacks directory must match STACKS_DIR in /etc/hawser/config.
 ReadWritePaths=/var/run/docker.sock -/data/stacks
 
