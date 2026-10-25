@@ -63,9 +63,12 @@ sudo install -m 755 "$TMP_DIR/hawser" "$INSTALL_DIR/hawser"
 echo "Creating config directory..."
 sudo mkdir -p "$CONFIG_DIR"
 
-# Create stacks directory
-echo "Creating stacks directory..."
-sudo mkdir -p /data/stacks
+# Stacks directory: STACKS_DIR from the environment, else from an existing config, else the default
+STACKS_DIR="${STACKS_DIR:-$(sudo sed -n 's/^STACKS_DIR=//p' "$CONFIG_DIR/config" 2>/dev/null | tail -1)}"
+STACKS_DIR="${STACKS_DIR%\"}"; STACKS_DIR="${STACKS_DIR#\"}"; STACKS_DIR="${STACKS_DIR%\'}"; STACKS_DIR="${STACKS_DIR#\'}"
+STACKS_DIR="${STACKS_DIR:-/data/stacks}"
+echo "Creating stacks directory $STACKS_DIR..."
+sudo mkdir -p "$STACKS_DIR"
 
 # Create default config file if it doesn't exist
 if [ ! -f "$CONFIG_DIR/config" ]; then
@@ -105,6 +108,9 @@ TOKEN=change-me-before-starting
 # Restrict it to localhost so the host has no externally-reachable surface:
 # BIND_ADDRESS=127.0.0.1
 EOF
+    if [ "$STACKS_DIR" != "/data/stacks" ]; then
+        echo "STACKS_DIR=$STACKS_DIR" | sudo tee -a "$CONFIG_DIR/config" > /dev/null
+    fi
 fi
 
 # The config can hold a TOKEN, so it must not be world-readable.
@@ -113,7 +119,9 @@ sudo chmod 600 "$CONFIG_DIR/config"
 # Install systemd service if systemd is available
 if command -v systemctl &> /dev/null; then
     echo "Installing systemd service..."
-    sudo tee /etc/systemd/system/hawser.service > /dev/null << 'EOF'
+    # The service may only write to the stacks directory it was installed with; after
+    # changing STACKS_DIR, run this installer again or add the path with `systemctl edit hawser`.
+    sudo tee /etc/systemd/system/hawser.service > /dev/null << EOF
 [Unit]
 Description=Hawser - Remote Docker Agent for Dockhand
 Documentation=https://github.com/Finsys/hawser
@@ -132,7 +140,7 @@ EnvironmentFile=/etc/hawser/config
 NoNewPrivileges=false
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/run/docker.sock /data/stacks
+ReadWritePaths=/var/run/docker.sock -${STACKS_DIR}
 
 [Install]
 WantedBy=multi-user.target

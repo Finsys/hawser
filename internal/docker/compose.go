@@ -104,7 +104,7 @@ type RegistryCredentials struct {
 
 // ComposeOperation represents a compose operation request
 type ComposeOperation struct {
-	Operation       string                `json:"operation"` // up, down, pull, ps, logs
+	Operation       string                `json:"operation"` // up, down, pull, build, ps, logs
 	ProjectName     string                `json:"projectName"`
 	WorkDir         string                `json:"workDir"`
 	ComposeFile     string                `json:"composeFile,omitempty"`     // Content of compose file
@@ -119,6 +119,7 @@ type ComposeOperation struct {
 	ServiceName     string                `json:"serviceName,omitempty"`     // Target specific service only (with --no-deps)
 	Build           bool                  `json:"build,omitempty"`           // Build images before starting (--build)
 	NoBuildCache    bool                  `json:"noBuildCache,omitempty"`    // Build without cache (--no-cache)
+	PullBase        bool                  `json:"pullBase,omitempty"`        // build: pull newer base images first (--pull)
 	PullPolicy      string                `json:"pullPolicy,omitempty"`      // Pull policy: 'always' | 'missing' | 'never'
 	FilesToDelete   []FileToDelete        `json:"filesToDelete,omitempty"`   // Git deletion sync (#966): hash-verified file removals
 	RemoveFiles     bool                  `json:"removeFiles,omitempty"`     // On down: remove the stack directory entirely (#1162, stack deletion only)
@@ -253,8 +254,8 @@ func (c *ComposeClient) Execute(ctx context.Context, op *ComposeOperation, onLin
 		}, nil
 	}
 
-	// Login to registries before up/pull operations
-	if op.Operation == "up" || op.Operation == "pull" {
+	// Login to registries before operations that pull (a build pulls its base images)
+	if op.Operation == "up" || op.Operation == "pull" || op.Operation == "build" {
 		c.loginToRegistries(ctx, op.Registries)
 	}
 
@@ -466,6 +467,14 @@ func (c *ComposeClient) Execute(ctx context.Context, op *ComposeOperation, onLin
 		}
 	case "pull":
 		args = append(args, "pull")
+	case "build":
+		args = append(args, "build")
+		if op.PullBase {
+			args = append(args, "--pull")
+		}
+		if op.NoBuildCache {
+			args = append(args, "--no-cache")
+		}
 	case "ps":
 		args = append(args, "ps", "--format", "json")
 	case "logs":

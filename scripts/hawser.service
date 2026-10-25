@@ -21,7 +21,8 @@ SyslogIdentifier=hawser
 NoNewPrivileges=false
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/run/docker.sock /data/stacks
+# The stacks directory must match STACKS_DIR in /etc/hawser/config.
+ReadWritePaths=/var/run/docker.sock -/data/stacks
 
 # Resource limits
 LimitNOFILE=65535

@@ -222,3 +222,31 @@ func TestTeeLinesHandlesHugeLineWithoutDeadlock(t *testing.T) {
 		t.Fatalf("dst buffer = %d bytes, want the full %d bytes written", buf.Len(), len(payload))
 	}
 }
+
+// TestBuildOperationArgs runs the build operation with `echo` standing in for the
+// compose binary, so the output is the exact argument list compose would get.
+// `docker compose build --pull` is what refreshes a Dockerfile's FROM image; `up
+// --build --pull always` does not (measured on compose 5.1.3).
+func TestBuildOperationArgs(t *testing.T) {
+	cases := []struct {
+		op   ComposeOperation
+		want string
+	}{
+		{ComposeOperation{Operation: "build"}, "build"},
+		{ComposeOperation{Operation: "build", PullBase: true}, "build --pull"},
+		{ComposeOperation{Operation: "build", NoBuildCache: true}, "build --no-cache"},
+		{ComposeOperation{Operation: "build", PullBase: true, NoBuildCache: true}, "build --pull --no-cache"},
+	}
+	for _, tc := range cases {
+		c := NewComposeClient("", t.TempDir())
+		c.composeCmd, c.composeArgs, c.composeChecked = "echo", nil, true
+		op := tc.op
+		res, err := c.Execute(context.Background(), &op, nil)
+		if err != nil {
+			t.Fatalf("%+v: Execute: %v", tc.op, err)
+		}
+		if got := strings.TrimSpace(res.Output); !strings.HasSuffix(got, tc.want) || strings.Contains(strings.TrimSuffix(got, tc.want), "build") {
+			t.Fatalf("%+v: args = %q, want them to end with %q", tc.op, got, tc.want)
+		}
+	}
+}

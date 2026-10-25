@@ -136,7 +136,7 @@ EnvironmentFile=/etc/hawser/config
 NoNewPrivileges=false
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/run/docker.sock /data/stacks
+ReadWritePaths=/var/run/docker.sock -/data/stacks
 
 [Install]
 WantedBy=multi-user.target
@@ -209,8 +209,9 @@ curl -fsSL https://github.com/Finsys/hawser/releases/latest/download/hawser_linu
 sudo install -m 755 hawser /usr/local/bin/hawser
 
 # 2. Create config and stacks directories
-#    /data/stacks must exist — the service unit's ReadWritePaths references it,
-#    and systemd fails to start the service if the path is missing.
+#    The service may only write to the stacks directory named in ReadWritePaths.
+#    For a different STACKS_DIR, use that path there (or run the installer with
+#    STACKS_DIR=/your/path, which does both).
 sudo mkdir -p /etc/hawser /data/stacks
 
 # 3. Create config file (edit with your settings)
@@ -242,7 +243,7 @@ EnvironmentFile=/etc/hawser/config
 NoNewPrivileges=false
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/run/docker.sock /data/stacks
+ReadWritePaths=/var/run/docker.sock -/data/stacks
 
 [Install]
 WantedBy=multi-user.target
