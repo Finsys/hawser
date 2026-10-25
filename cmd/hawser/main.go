@@ -23,7 +23,8 @@ func main() {
 	showHelp := flag.Bool("help", false, "Show help message")
 	showVersion := flag.Bool("version", false, "Show version information")
 
-	// Parse flags but allow unknown flags for subcommands like "standard"
+	// Parsing stops at the first non-flag argument, so a trailing "standard" (from older
+	// units and docs) is accepted and ignored: the mode comes from the environment.
 	flag.CommandLine.SetOutput(os.Stdout)
 	flag.Parse()
 
@@ -52,6 +53,10 @@ func main() {
 
 	// Print startup banner
 	printBanner(cfg)
+
+	if cfg.DockerHost != "" {
+		log.Warnf("DOCKER_HOST=%s is ignored: Hawser talks to Docker only through the socket at %s (DOCKER_SOCKET)", cfg.DockerHost, cfg.DockerSocket)
+	}
 
 	// Setup graceful shutdown
 	stop := make(chan os.Signal, 1)
@@ -105,8 +110,8 @@ func printHelp() {
 	fmt.Println("Hawser - Remote Docker Agent for Dockhand")
 	fmt.Printf("Version: %s (%s)\n\n", version, commit)
 	fmt.Println("USAGE:")
-	fmt.Println("  hawser              Run in Edge mode (connects outbound to Dockhand)")
-	fmt.Println("  hawser standard     Run in Standard mode (HTTP server)")
+	fmt.Println("  hawser              Run the agent. The mode comes from the environment:")
+	fmt.Println("                      Edge when DOCKHAND_SERVER_URL is set, otherwise Standard")
 	fmt.Println()
 	fmt.Println("OPTIONS:")
 	fmt.Println("  --help       Show this help message")
@@ -138,7 +143,7 @@ func printHelp() {
 	fmt.Println()
 	fmt.Println("EXAMPLES:")
 	fmt.Println("  # Standard mode (manual run)")
-	fmt.Println("  PORT=2376 TOKEN=secret hawser standard")
+	fmt.Println("  PORT=2376 TOKEN=secret hawser")
 	fmt.Println()
 	fmt.Println("  # Edge mode (manual run)")
 	fmt.Println("  DOCKHAND_SERVER_URL=wss://dockhand.example.com/api/hawser/connect \\")

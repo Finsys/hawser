@@ -25,15 +25,18 @@ func TestIsLoopbackBind(t *testing.T) {
 	}
 }
 
-// newStandardCfg builds a minimal standard-mode config. DockerHost is set so
-// validate() skips the socket-exists check, isolating the auth/bind logic.
+// existingPath stands in for the Docker socket: validate() only checks that it exists.
+var existingPath = os.Args[0]
+
+// newStandardCfg builds a minimal standard-mode config that passes the socket check,
+// isolating the auth/bind logic.
 func newStandardCfg(bind, token string, allow bool) *Config {
 	return &Config{
 		Port:                2376,
 		BindAddress:         bind,
 		Token:               token,
 		AllowInsecureNoAuth: allow,
-		DockerHost:          "tcp://localhost:2375",
+		DockerSocket:        existingPath,
 	}
 }
 
@@ -68,7 +71,7 @@ func TestValidate_EdgeMode_Unaffected(t *testing.T) {
 		Token:             "secret",
 		Port:              2376,
 		BindAddress:       "0.0.0.0",
-		DockerHost:        "tcp://localhost:2375",
+		DockerSocket:      existingPath,
 	}
 	if err := cfg.validate(); err != nil {
 		t.Fatalf("edge-mode validate() unexpected error: %v", err)
@@ -77,10 +80,10 @@ func TestValidate_EdgeMode_Unaffected(t *testing.T) {
 
 // TestLoad_ComposeTimeout verifies ComposeTimeout defaults to 900s and can be
 // overridden via COMPOSE_TIMEOUT, mirroring how RequestTimeout already
-// behaves. DOCKER_HOST is set so Load() skips the local docker-socket
-// existence check, isolating the timeout-parsing behavior under test.
+// behaves. DOCKER_SOCKET points at an existing path so Load() passes the socket
+// check, isolating the timeout-parsing behavior under test.
 func TestLoad_ComposeTimeout(t *testing.T) {
-	t.Setenv("DOCKER_HOST", "tcp://localhost:2375")
+	t.Setenv("DOCKER_SOCKET", existingPath)
 	t.Setenv("TOKEN", "test-token")
 
 	t.Run("defaults to 900 when unset", func(t *testing.T) {
@@ -108,7 +111,7 @@ func TestLoad_ComposeTimeout(t *testing.T) {
 // TestLoad_MaxMessageSize verifies MaxMessageSizeMB defaults to 256 and can be
 // overridden via MAX_MESSAGE_SIZE_MB, so large git repos can deploy over edge (#1581).
 func TestLoad_MaxMessageSize(t *testing.T) {
-	t.Setenv("DOCKER_HOST", "tcp://localhost:2375")
+	t.Setenv("DOCKER_SOCKET", existingPath)
 	t.Setenv("TOKEN", "test-token")
 
 	t.Run("defaults to 256 when unset", func(t *testing.T) {
@@ -134,7 +137,7 @@ func TestLoad_MaxMessageSize(t *testing.T) {
 }
 
 func TestLoad_Token(t *testing.T) {
-	t.Setenv("DOCKER_HOST", "tcp://localhost:2375")
+	t.Setenv("DOCKER_SOCKET", existingPath)
 
 	t.Run("token loaded from TOKEN env var", func(t *testing.T) {
 		t.Setenv("TOKEN", "env-secret-token")
@@ -203,6 +206,43 @@ func TestLoad_Token(t *testing.T) {
 		}
 		if !strings.Contains(err.Error(), "reading TOKEN_FILE") {
 			t.Errorf("expected error mentioning 'reading TOKEN_FILE', got %v", err)
+		}
+	})
+}
+
+func TestLoad_DockerHost(t *testing.T) {
+	t.Setenv("TOKEN", "test-token")
+	t.Setenv("DOCKER_SOCKET", "")
+
+	t.Run("unix DOCKER_HOST names the socket", func(t *testing.T) {
+		t.Setenv("DOCKER_HOST", "unix://"+existingPath)
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		if cfg.DockerSocket != existingPath || cfg.DockerHost != "" {
+			t.Errorf("DockerSocket = %q, DockerHost = %q", cfg.DockerSocket, cfg.DockerHost)
+		}
+	})
+
+	t.Run("DOCKER_SOCKET wins over a unix DOCKER_HOST", func(t *testing.T) {
+		t.Setenv("DOCKER_SOCKET", existingPath)
+		t.Setenv("DOCKER_HOST", "unix:///nonexistent.sock")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		if cfg.DockerSocket != existingPath {
+			t.Errorf("DockerSocket = %q, want %q", cfg.DockerSocket, existingPath)
+		}
+	})
+
+	t.Run("tcp DOCKER_HOST is kept for the warning and does not skip the socket check", func(t *testing.T) {
+		t.Setenv("DOCKER_HOST", "tcp://localhost:2375")
+		t.Setenv("DOCKER_SOCKET", "/nonexistent/docker.sock")
+		cfg, err := Load()
+		if err == nil {
+			t.Fatalf("Load() accepted a missing socket: %+v", cfg)
 		}
 	})
 }

@@ -28,7 +28,7 @@ type Config struct {
 
 	// Docker connection
 	DockerSocket string // Default: /var/run/docker.sock
-	DockerHost   string // Alternative: tcp://localhost:2375
+	DockerHost   string // A non-unix DOCKER_HOST; unsupported, only reported at startup
 
 	// Agent identification
 	AgentID   string // Auto-generated UUID if not set
@@ -83,7 +83,6 @@ func Load() (*Config, error) {
 
 		// Docker
 		DockerSocket: getEnvString("DOCKER_SOCKET", detectDockerSocket()),
-		DockerHost:   os.Getenv("DOCKER_HOST"),
 
 		// Agent identification
 		AgentID:   getEnvString("AGENT_ID", generateAgentID()),
@@ -106,6 +105,18 @@ func Load() (*Config, error) {
 	}
 
 	// Validate configuration
+	// A unix:// DOCKER_HOST names the socket when DOCKER_SOCKET is not set. Hawser talks
+	// to Docker only through a socket, so any other DOCKER_HOST is kept for a warning.
+	if host := os.Getenv("DOCKER_HOST"); host != "" {
+		if sock, ok := strings.CutPrefix(host, "unix://"); ok {
+			if os.Getenv("DOCKER_SOCKET") == "" {
+				cfg.DockerSocket = sock
+			}
+		} else {
+			cfg.DockerHost = host
+		}
+	}
+
 	if err := cfg.validate(); err != nil {
 		return nil, err
 	}
@@ -121,14 +132,6 @@ func (c *Config) EdgeMode() bool {
 // TLSEnabled returns true if TLS is configured for standard mode
 func (c *Config) TLSEnabled() bool {
 	return c.TLSCert != "" && c.TLSKey != ""
-}
-
-// GetDockerEndpoint returns the Docker endpoint to connect to
-func (c *Config) GetDockerEndpoint() string {
-	if c.DockerHost != "" {
-		return c.DockerHost
-	}
-	return "unix://" + c.DockerSocket
 }
 
 func (c *Config) validate() error {
@@ -163,11 +166,8 @@ func (c *Config) validate() error {
 		return fmt.Errorf("PORT must be between 1 and 65535")
 	}
 
-	// Validate docker socket exists (if using socket)
-	if c.DockerHost == "" {
-		if _, err := os.Stat(c.DockerSocket); os.IsNotExist(err) {
-			return fmt.Errorf("Docker socket not found at %s", c.DockerSocket)
-		}
+	if _, err := os.Stat(c.DockerSocket); os.IsNotExist(err) {
+		return fmt.Errorf("Docker socket not found at %s", c.DockerSocket)
 	}
 
 	return nil
