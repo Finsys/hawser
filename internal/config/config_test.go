@@ -237,7 +237,19 @@ func TestLoad_DockerHost(t *testing.T) {
 		}
 	})
 
-	t.Run("tcp DOCKER_HOST is kept for the warning and does not skip the socket check", func(t *testing.T) {
+	t.Run("tcp DOCKER_HOST is kept for the warning", func(t *testing.T) {
+		t.Setenv("DOCKER_HOST", "tcp://localhost:2375")
+		t.Setenv("DOCKER_SOCKET", existingPath)
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		if cfg.DockerHost != "tcp://localhost:2375" || cfg.DockerSocket != existingPath {
+			t.Errorf("DockerHost = %q, DockerSocket = %q", cfg.DockerHost, cfg.DockerSocket)
+		}
+	})
+
+	t.Run("tcp DOCKER_HOST does not skip the socket check", func(t *testing.T) {
 		t.Setenv("DOCKER_HOST", "tcp://localhost:2375")
 		t.Setenv("DOCKER_SOCKET", "/nonexistent/docker.sock")
 		cfg, err := Load()

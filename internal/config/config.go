@@ -104,7 +104,6 @@ func Load() (*Config, error) {
 		StacksDir: getEnvString("STACKS_DIR", "/data/stacks"),
 	}
 
-	// Validate configuration
 	// A unix:// DOCKER_HOST names the socket when DOCKER_SOCKET is not set. Hawser talks
 	// to Docker only through a socket, so any other DOCKER_HOST is kept for a warning.
 	if host := os.Getenv("DOCKER_HOST"); host != "" {
@@ -117,6 +116,7 @@ func Load() (*Config, error) {
 		}
 	}
 
+	// Validate configuration
 	if err := cfg.validate(); err != nil {
 		return nil, err
 	}
