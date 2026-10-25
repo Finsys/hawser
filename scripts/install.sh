@@ -57,6 +57,7 @@ tar -xzf "$TMP_DIR/hawser.tar.gz" -C "$TMP_DIR"
 
 # Install binary
 echo "Installing binary to $INSTALL_DIR..."
+sudo mkdir -p "$INSTALL_DIR"
 sudo install -m 755 "$TMP_DIR/hawser" "$INSTALL_DIR/hawser"
 
 # Create config directory
@@ -131,7 +132,7 @@ Requires=docker.service
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/hawser
+ExecStart=${INSTALL_DIR}/hawser
 Restart=always
 RestartSec=10
 EnvironmentFile=/etc/hawser/config
@@ -158,7 +159,7 @@ elif command -v rc-service &> /dev/null; then
     echo "Installing OpenRC service..."
 
     # Create wrapper script that sources config and runs hawser
-    sudo tee /usr/local/bin/hawser-wrapper > /dev/null << 'EOF'
+    sudo tee /usr/local/bin/hawser-wrapper > /dev/null << EOF
 #!/bin/sh
 # Wrapper script for hawser that loads config file
 if [ -f /etc/hawser/config ]; then
@@ -166,7 +167,7 @@ if [ -f /etc/hawser/config ]; then
     . /etc/hawser/config
     set +a
 fi
-exec /usr/local/bin/hawser "$@"
+exec "${INSTALL_DIR}/hawser" "\$@"
 EOF
     sudo chmod +x /usr/local/bin/hawser-wrapper
 
