@@ -150,7 +150,12 @@ Restart=always
 RestartSec=10
 EnvironmentFile=/etc/hawser/config
 
-# Security hardening
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=hawser
+
+# Security hardening (relaxed for Docker access)
 NoNewPrivileges=false
 ProtectSystem=strict
 ProtectHome=true
@@ -158,7 +163,12 @@ ProtectHome=true
 # two lines above take away. /run/hawser is tmpfs: registry logins never reach the disk.
 RuntimeDirectory=hawser
 Environment=DOCKER_CONFIG=/run/hawser TMPDIR=/run/hawser
+# The stacks directory must match STACKS_DIR in /etc/hawser/config.
 ReadWritePaths=/var/run/docker.sock -/data/stacks
+
+# Resource limits
+LimitNOFILE=65535
+LimitNPROC=4096
 
 [Install]
 WantedBy=multi-user.target
@@ -268,7 +278,12 @@ Restart=always
 RestartSec=10
 EnvironmentFile=/etc/hawser/config
 
-# Security hardening
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=hawser
+
+# Security hardening (relaxed for Docker access)
 NoNewPrivileges=false
 ProtectSystem=strict
 ProtectHome=true
@@ -276,7 +291,12 @@ ProtectHome=true
 # two lines above take away. /run/hawser is tmpfs: registry logins never reach the disk.
 RuntimeDirectory=hawser
 Environment=DOCKER_CONFIG=/run/hawser TMPDIR=/run/hawser
+# The stacks directory must match STACKS_DIR in /etc/hawser/config.
 ReadWritePaths=/var/run/docker.sock -/data/stacks
+
+# Resource limits
+LimitNOFILE=65535
+LimitNPROC=4096
 
 [Install]
 WantedBy=multi-user.target
@@ -496,6 +516,7 @@ Hawser is configured via environment variables:
 | `BIND_ADDRESS` | Address to bind to (use `127.0.0.1` to restrict to localhost) | `0.0.0.0` |
 | `ALLOW_INSECURE_NO_AUTH` | Permit Standard mode to bind a non-loopback address with no `TOKEN` (insecure; only for networks isolated by other means) | `false` |
 | `DOCKER_SOCKET` | Docker socket path | First existing of `/var/run/docker.sock`, `~/.docker/run/docker.sock`, `~/.orbstack/run/docker.sock`, `/run/docker.sock` |
+| `DOCKER_HOST` | A `unix://` path is used as the socket when `DOCKER_SOCKET` is not set. Hawser only talks to a Unix socket: any other value (e.g. `tcp://`) is ignored with a warning. | - |
 | `STACKS_DIR` | Directory for compose stack files (requires Dockhand 1.0.5+). Use a host path bind mount with matching paths if stacks use relative file bind mounts. | `/data/stacks` |
 | `AGENT_ID` | Unique agent identifier. Set it to keep the same ID across restarts. | New UUID on every start |
 | `AGENT_NAME` | Human-readable agent name | Hostname |
@@ -562,7 +583,7 @@ Hawser provides full access to the Docker API:
 
 Hawser includes Docker Compose support for stack operations:
 
-- `up` - Deploy stack (optionally building images first, with a pull policy or force-recreate)
+- `up` - Deploy stack (optionally building images first, also without cache, with a pull policy or force-recreate; a no-cache rebuild runs `build --no-cache` and then `up`)
 - `down` - Remove stack
 - `pull` - Pull images
 - `build` - Build images, optionally pulling newer base images (`--pull`) or without cache

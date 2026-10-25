@@ -12,7 +12,7 @@ Type=simple
 User={{ hawser_user }}
 Group={{ hawser_group }}
 EnvironmentFile=/etc/hawser.env
-ExecStart={{ hawser_install_dir }}/hawser{% if hawser_mode == 'standard' %} standard --port {{ hawser_port }}{% endif %}
+ExecStart={{ hawser_install_dir }}/hawser
 
 Restart=always
 RestartSec=5

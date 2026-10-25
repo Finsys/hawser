@@ -105,7 +105,7 @@ TOKEN=change-me-before-starting
 # Agent identification (optional)
 # AGENT_NAME=my-server
 
-# Edge mode only needs port 2376 open for Docker's HEALTHCHECK directive.
+# Edge mode only listens for its health check (on PORT, default 2376).
 # Restrict it to localhost so the host has no externally-reachable surface:
 # BIND_ADDRESS=127.0.0.1
 EOF
@@ -137,7 +137,12 @@ Restart=always
 RestartSec=10
 EnvironmentFile=/etc/hawser/config
 
-# Security hardening
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=hawser
+
+# Security hardening (relaxed for Docker access)
 NoNewPrivileges=false
 ProtectSystem=strict
 ProtectHome=true
@@ -145,7 +150,12 @@ ProtectHome=true
 # two lines above take away. /run/hawser is tmpfs: registry logins never reach the disk.
 RuntimeDirectory=hawser
 Environment=DOCKER_CONFIG=/run/hawser TMPDIR=/run/hawser
+# The stacks directory must match STACKS_DIR in /etc/hawser/config.
 ReadWritePaths=/var/run/docker.sock -${STACKS_DIR}
+
+# Resource limits
+LimitNOFILE=65535
+LimitNPROC=4096
 
 [Install]
 WantedBy=multi-user.target
@@ -216,5 +226,5 @@ elif [ "$INIT_SYSTEM" = "openrc" ]; then
 fi
 
 echo "Manual run (for testing):"
-echo "  Standard mode: PORT=2376 TOKEN=secret hawser standard"
+echo "  Standard mode: PORT=2376 TOKEN=secret hawser"
 echo "  Edge mode:     DOCKHAND_SERVER_URL=wss://... TOKEN=your-token hawser"
