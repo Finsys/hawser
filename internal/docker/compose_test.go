@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -274,5 +275,32 @@ func TestInheritedEnv(t *testing.T) {
 		if strings.HasPrefix(kv, "HOME=") {
 			t.Fatalf("HOME passed although the host has none: %v", got)
 		}
+	}
+}
+
+// TestExecutePassesInheritedEnv runs Execute against a stand-in compose that prints
+// its environment, so it checks the env the real subprocess gets, not only the helper.
+func TestExecutePassesInheritedEnv(t *testing.T) {
+	fake := t.TempDir() + "/compose"
+	if err := os.WriteFile(fake, []byte("#!/bin/sh\nenv\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DOCKER_CONFIG", "/run/hawser")
+	t.Setenv("TMPDIR", "/run/hawser")
+	t.Setenv("LD_PRELOAD", "/evil.so")
+
+	c := &ComposeClient{composeCmd: fake, composeChecked: true, stacksDir: t.TempDir()}
+	res, err := c.Execute(context.Background(), &ComposeOperation{Operation: "ps"}, nil)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	env := strings.Split(res.Output, "\n")
+	for _, want := range []string{"DOCKER_CONFIG=/run/hawser", "TMPDIR=/run/hawser"} {
+		if !slices.Contains(env, want) {
+			t.Errorf("compose env lacks %s: %q", want, res.Output)
+		}
+	}
+	if strings.Contains(res.Output, "LD_PRELOAD") {
+		t.Errorf("compose env carries LD_PRELOAD: %q", res.Output)
 	}
 }

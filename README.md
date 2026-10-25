@@ -144,7 +144,7 @@ ReadWritePaths=/var/run/docker.sock -/data/stacks
 WantedBy=multi-user.target
 ```
 
-`ProtectSystem=strict` and `ProtectHome=true` leave the agent no writable Docker config directory and a read-only `/tmp`, which `docker login`, `docker compose build` and buildx all need. `RuntimeDirectory=hawser` creates `/run/hawser` on tmpfs, and `DOCKER_CONFIG` and `TMPDIR` point there, so registry logins and buildx state stay in memory and are gone after a restart (the agent logs in again before every pull and build). `HOME` and `/tmp` are left alone, so `${HOME}` in a compose file and files under `/tmp` resolve as before. To run without them, remove the two lines with `sudo systemctl edit --full hawser`; compose builds and private registry pulls then fail. Re-running the installer rewrites the unit.
+`ProtectSystem=strict` and `ProtectHome=true` leave the agent no writable Docker config directory and a read-only `/tmp`, which `docker login`, `docker compose build` and buildx all need. `RuntimeDirectory=hawser` creates `/run/hawser` on tmpfs, and `DOCKER_CONFIG` and `TMPDIR` point there, so registry logins and buildx state stay in memory and are gone after a restart (the agent logs in again before every pull and build). `HOME` and `/tmp` are left alone, so `${HOME}` in a compose file and files under `/tmp` resolve as before; `${TMPDIR}` and `${DOCKER_CONFIG}` in a compose file resolve to `/run/hawser`. To run without them, remove the two lines with `sudo systemctl edit --full hawser`; compose builds and private registry pulls then fail. Re-running the installer rewrites the unit.
 
 **`/etc/hawser/config`** (Standard Mode example):
 
