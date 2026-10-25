@@ -79,11 +79,12 @@ TLS_SKIP_VERIFY=true DOCKHAND_SERVER_URL=wss://your-dockhand.example.com/api/haw
 curl -fsSL https://raw.githubusercontent.com/Finsys/hawser/main/scripts/install.sh | bash
 ```
 
-The installer honours `HAWSER_VERSION` (default: the latest release) and `STACKS_DIR` (default
-`/data/stacks`); pass them to `bash`, e.g. `curl ... | HAWSER_VERSION=0.2.52 STACKS_DIR=/srv/stacks bash`.
-`STACKS_DIR` sets the directory the service may write to, and is written into the config only when
-`/etc/hawser/config` does not exist yet. On Alpine (OpenRC) it installs an init script instead of a
-systemd unit, with logs in `/var/log/hawser.log`.
+The installer honours `HAWSER_VERSION` (default: the latest release), `STACKS_DIR` (default
+`/data/stacks`) and `INSTALL_DIR` (default `/usr/local/bin`); pass them to `bash`, e.g.
+`curl ... | HAWSER_VERSION=0.2.52 STACKS_DIR=/srv/stacks bash`. `STACKS_DIR` sets the directory the
+service may write to, and is written into the config only when `/etc/hawser/config` does not exist
+yet: on an existing install, change `STACKS_DIR` in the config as well. On Alpine (OpenRC) it installs
+an init script instead of a systemd unit, with logs in `/var/log/hawser.log`.
 
 2. Configure the service:
 
@@ -123,10 +124,10 @@ Run the installer again, then restart the service:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Finsys/hawser/main/scripts/install.sh | bash
-sudo systemctl restart hawser
+sudo systemctl restart hawser      # OpenRC: sudo rc-service hawser restart
 ```
 
-The installer replaces the binary and rewrites the systemd unit, and keeps `/etc/hawser/config`. Replacing only the binary leaves the old unit in place, so changes to the unit (such as the writable Docker config directory needed for private registry pulls and compose builds) do not take effect. To pin a version, set `HAWSER_VERSION`, e.g. `curl ... | HAWSER_VERSION=0.2.52 bash`.
+The installer replaces the binary and rewrites the systemd unit (or the OpenRC init script), and keeps `/etc/hawser/config`. Replacing only the binary leaves the old unit in place, so changes to the unit (such as the writable Docker config directory needed for private registry pulls and compose builds) do not take effect. To pin a version, set `HAWSER_VERSION`, e.g. `curl ... | HAWSER_VERSION=0.2.52 bash`.
 
 #### Full Systemd Service File
 
@@ -214,9 +215,11 @@ DOCKER_SOCKET=/var/run/docker.sock
 # CA_CERT=/etc/hawser/dockhand-ca.crt
 # TLS_SKIP_VERIFY=false
 
+# Docker API request timeout in seconds (optional, both modes)
+# REQUEST_TIMEOUT=30
+
 # Connection settings (optional, Edge mode)
 # HEARTBEAT_INTERVAL=30
-# REQUEST_TIMEOUT=30
 # COMPOSE_TIMEOUT=900
 # RECONNECT_DELAY=1
 # MAX_RECONNECT_DELAY=60
@@ -227,9 +230,9 @@ DOCKER_SOCKET=/var/run/docker.sock
 **Manual installation steps:**
 
 ```bash
-# 1. Download binary (release archives carry the version; use arm64 or armv7 as needed)
+# 1. Download binary (release archives carry the version; use arm64, or arm for ARMv7, as needed)
 VER=0.2.52
-curl -fsSL https://github.com/Finsys/hawser/releases/download/v${VER}/hawser_${VER}_linux_amd64.tar.gz | tar xz
+curl -fsSL https://github.com/Finsys/hawser/releases/download/v${VER}/hawser_${VER}_linux_amd64.tar.gz | tar xz hawser
 sudo install -m 755 hawser /usr/local/bin/hawser
 
 # 2. Create config and stacks directories
@@ -441,8 +444,10 @@ curl http://localhost:2376/_hawser/health
 {"status":"healthy","mode":"edge","connected":true}
 ```
 
-In Edge mode the endpoint answers 200 with `"connected":false` while the agent is reconnecting. With
-`TLS_CERT` set, the built-in check uses `https`.
+In Edge mode the endpoint answers 200 with `"connected":false` while the agent is reconnecting.
+In Standard mode with `TLS_CERT`/`TLS_KEY` set, the built-in check uses `https`. Do not set `TLS_CERT`
+in Edge mode: the Edge health endpoint is always plain HTTP (the connection to Dockhand is encrypted
+by `wss://`), so the check would fail.
 
 **Container status:**
 
@@ -557,7 +562,7 @@ Hawser provides full access to the Docker API:
 
 Hawser includes Docker Compose support for stack operations:
 
-- `up` - Deploy stack (optionally building images, without cache, with a pull policy or force-recreate)
+- `up` - Deploy stack (optionally building images first, with a pull policy or force-recreate)
 - `down` - Remove stack
 - `pull` - Pull images
 - `build` - Build images, optionally pulling newer base images (`--pull`) or without cache
@@ -567,15 +572,16 @@ Hawser includes Docker Compose support for stack operations:
 
 ### Host Metrics
 
-Hawser collects and reports host metrics:
+In Edge mode, Hawser collects and reports host metrics every 30 seconds (Standard mode does not
+collect them):
 
-- CPU usage (total, Linux only) and core count
+- CPU usage (total) and core count
 - Memory (total, used, available)
 - Disk usage (Docker data directory)
 - Network I/O statistics
 - Uptime
 
-Metrics are sent every 30 seconds in Edge mode.
+All of them except disk usage are read from `/proc`, so they are Linux-only.
 
 #### Disabling Disk Usage Collection
 
@@ -585,15 +591,15 @@ To disable disk usage collection, set the `SKIP_DF_COLLECTION` environment varia
 
 ```bash
 # Binary
-SKIP_DF_COLLECTION=1 TOKEN=your-secret-token hawser
+SKIP_DF_COLLECTION=1 DOCKHAND_SERVER_URL=wss://your-dockhand.example.com/api/hawser/connect TOKEN=your-agent-token hawser
 
 # Docker
 docker run -d \
   --name hawser \
   --restart unless-stopped \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  -p 2376:2376 \
-  -e TOKEN=your-secret-token \
+  -e DOCKHAND_SERVER_URL=wss://your-dockhand.example.com/api/hawser/connect \
+  -e TOKEN=your-agent-token \
   -e SKIP_DF_COLLECTION=1 \
   ghcr.io/finsys/hawser:latest
 
@@ -617,9 +623,9 @@ Hawser automatically negotiates the Docker API version with the daemon. When run
 
 ### Standard Mode
 
-In Standard mode, Hawser proxies all Docker API endpoints plus the ones below. Every request except
-`/_hawser/health` must carry the token in the `X-Hawser-Token` header; after 10 failed attempts in a
-minute an IP is answered with 429.
+In Standard mode, Hawser proxies all Docker API endpoints plus the ones below. When `TOKEN` is set,
+every request except `/_hawser/health` must carry it in the `X-Hawser-Token` header. After 10 failed
+attempts within a minute, that IP gets 429 (even with the right token) until the minute has passed.
 
 | Endpoint | Description |
 |----------|-------------|
