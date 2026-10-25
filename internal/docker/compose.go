@@ -25,20 +25,20 @@ var validEnvKeyRegex = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 // deniedEnvKeys are environment variable names that could be used for code execution
 // or to redirect Docker operations to an attacker-controlled endpoint.
 var deniedEnvKeys = map[string]bool{
-	"LD_PRELOAD":      true,
-	"LD_LIBRARY_PATH": true,
-	"PATH":            true,
-	"DOCKER_HOST":     true,
-	"DOCKER_CONFIG":   true,
-	"DOCKER_CERT_PATH": true,
+	"LD_PRELOAD":        true,
+	"LD_LIBRARY_PATH":   true,
+	"PATH":              true,
+	"DOCKER_HOST":       true,
+	"DOCKER_CONFIG":     true,
+	"DOCKER_CERT_PATH":  true,
 	"DOCKER_TLS_VERIFY": true,
-	"DOCKER_CONTEXT":  true,
-	"HOME":            true,
-	"SHELL":           true,
-	"BASH_ENV":        true,
-	"ENV":             true,
-	"CDPATH":          true,
-	"IFS":             true,
+	"DOCKER_CONTEXT":    true,
+	"HOME":              true,
+	"SHELL":             true,
+	"BASH_ENV":          true,
+	"ENV":               true,
+	"CDPATH":            true,
+	"IFS":               true,
 }
 
 // inheritedEnvKeys are the agent's own variables a compose command keeps. DOCKER_CONFIG
