@@ -150,10 +150,11 @@ ansible-playbook -i inventory.yml uninstall.yml
 2. **Downloads** the correct binary for the target architecture (amd64/arm64/arm) from GitHub releases
 3. **Verifies** SHA256 checksum against the release checksums
 4. **Installs** the binary to `/usr/local/bin/hawser`
-5. **Creates** `/etc/hawser.env` (mode 0600) with the token and configuration
-6. **Deploys** a systemd unit with security hardening (`NoNewPrivileges`, `ProtectSystem=strict`, `ProtectHome`, `PrivateTmp`, `ReadOnlyPaths`)
-7. **Enables and starts** the service
-8. **Verifies** the service is active
+5. **Creates** the stacks directory (`hawser_stacks_dir`) if it does not exist; an existing one keeps its owner and mode
+6. **Creates** `/etc/hawser.env` (mode 0600) with the token and configuration
+7. **Deploys** a systemd unit with security hardening (`NoNewPrivileges`, `ProtectSystem=strict`, `ProtectHome`, `PrivateTmp`, `ReadOnlyPaths=/`). The only writable paths are the stacks directory (`ReadWritePaths`) and `/run/hawser` (`RuntimeDirectory`, tmpfs), which holds the Docker config and temp files for registry logins and image builds
+8. **Enables and starts** the service
+9. **Verifies** the service is active
 
 On re-run, skips download if the correct version is already installed (idempotent).
 
