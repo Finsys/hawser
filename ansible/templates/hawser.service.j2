@@ -4,6 +4,8 @@ Documentation=https://github.com/Finsys/hawser
 After=network-online.target docker.service
 Wants=network-online.target
 Requires=docker.service
+StartLimitIntervalSec=60
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -14,8 +16,6 @@ ExecStart={{ hawser_install_dir }}/hawser{% if hawser_mode == 'standard' %} stan
 
 Restart=always
 RestartSec=5
-StartLimitIntervalSec=60
-StartLimitBurst=5
 
 NoNewPrivileges=true
 ProtectSystem=strict
