@@ -3,10 +3,13 @@ package docker
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -310,7 +313,7 @@ func fakeCompose(t *testing.T, exitCode int) (*ComposeClient, string) {
 	t.Helper()
 	dir := t.TempDir()
 	logFile := dir + "/args.log"
-	script := fmt.Sprintf("#!/bin/sh\necho \"$*\" >> %s\nexit %d\n", logFile, exitCode)
+	script := fmt.Sprintf("#!/bin/sh\necho \"$*\" >> %s\necho \"ran $*\"\nexit %d\n", logFile, exitCode)
 	if err := os.WriteFile(dir+"/compose", []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -327,6 +330,8 @@ func readCalls(t *testing.T, logFile string) []string {
 }
 
 // docker compose up rejects --no-cache, so a no-cache rebuild must be a separate build.
+// The up keeps --build: without it `--pull always` replaces a service's fresh image with
+// the registry tag named in its image: field (measured with docker compose 5.1).
 func TestUpWithNoBuildCacheBuildsFirst(t *testing.T) {
 	c, logFile := fakeCompose(t, 0)
 	op := &ComposeOperation{Operation: "up", ProjectName: "p", ComposeFile: "services: {}", Build: true, NoBuildCache: true, PullPolicy: "always"}
@@ -341,11 +346,49 @@ func TestUpWithNoBuildCacheBuildsFirst(t *testing.T) {
 	if !strings.Contains(calls[0], " build --no-cache") {
 		t.Errorf("first call should be build --no-cache: %q", calls[0])
 	}
-	if !strings.Contains(calls[1], " up -d --remove-orphans") || strings.Contains(calls[1], "--no-cache") || strings.Contains(calls[1], "--build") {
-		t.Errorf("second call should be a plain up: %q", calls[1])
+	if !strings.Contains(calls[1], " up -d --remove-orphans --build --pull always") || strings.Contains(calls[1], "--no-cache") {
+		t.Errorf("second call should be up --build with the pull policy and no --no-cache: %q", calls[1])
 	}
-	if !strings.Contains(calls[1], "--pull always") {
-		t.Errorf("up keeps the pull policy: %q", calls[1])
+	if !strings.Contains(res.Output, "ran "+calls[0]) || !strings.Contains(res.Output, "ran "+calls[1]) {
+		t.Errorf("output should hold both steps: %q", res.Output)
+	}
+}
+
+// File deletions run with the build step, before the build reads the context, and are
+// reported in the result.
+func TestUpWithNoBuildCacheDeletesBeforeBuild(t *testing.T) {
+	dir := t.TempDir()
+	stacks := t.TempDir()
+	logFile := dir + "/args.log"
+	stale := filepath.Join(stacks, "p", "stale.conf")
+	script := fmt.Sprintf("#!/bin/sh\nif [ -e %s ]; then s=present; else s=absent; fi\necho \"$* stale=$s\" >> %s\n", stale, logFile)
+	if err := os.WriteFile(dir+"/compose", []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(stale), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := []byte("old\n")
+	if err := os.WriteFile(stale, content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(content)
+	c := &ComposeClient{composeCmd: dir + "/compose", composeChecked: true, stacksDir: stacks}
+	op := &ComposeOperation{
+		Operation: "up", ProjectName: "p", Build: true, NoBuildCache: true,
+		Files:         map[string]string{"compose.yaml": "services: {}"},
+		FilesToDelete: []FileToDelete{{Path: "stale.conf", Sha256: hex.EncodeToString(sum[:])}},
+	}
+	res, err := c.Execute(context.Background(), op, nil)
+	if err != nil || !res.Success {
+		t.Fatalf("Execute: %v %+v", err, res)
+	}
+	calls := readCalls(t, logFile)
+	if len(calls) != 2 || !strings.Contains(calls[0], " build --no-cache") || !strings.HasSuffix(calls[0], "stale=absent") {
+		t.Fatalf("the file must be gone before the build: %q", calls)
+	}
+	if len(res.DeletedFiles) != 1 || res.DeletedFiles[0] != "stale.conf" {
+		t.Errorf("DeletedFiles = %q, want [stale.conf]", res.DeletedFiles)
 	}
 }
 

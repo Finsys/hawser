@@ -262,8 +262,9 @@ func teeLines(dst *bytes.Buffer, onLine func(string)) (io.Writer, func()) {
 // synchronization; a callback with its own mutable state does.
 func (c *ComposeClient) Execute(ctx context.Context, op *ComposeOperation, onLine func(string)) (*ComposeResult, error) {
 	// `docker compose up` has no --no-cache, so a no-cache rebuild runs `build --no-cache`
-	// first and then `up` without building. File deletions go with the build step, so a
-	// file removed from the stack is not in the build context.
+	// first and then `up --build`, which is a cache hit. `up` must keep --build: without it
+	// a pull policy pulls a registry tag over the fresh image. File deletions go with the
+	// build step, so a file removed from the stack is not in the build context.
 	if op.Operation == "up" && op.Build && op.NoBuildCache {
 		buildOp := *op
 		buildOp.Operation = "build"
@@ -273,7 +274,6 @@ func (c *ComposeClient) Execute(ctx context.Context, op *ComposeOperation, onLin
 			return built, err
 		}
 		upOp := *op
-		upOp.Build = false
 		upOp.NoBuildCache = false
 		upOp.FilesToDelete = nil
 		result, err := c.execute(ctx, &upOp, onLine)
