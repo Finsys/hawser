@@ -2,8 +2,10 @@
 - name: Validate token is set
   ansible.builtin.assert:
     that:
-      - hawser_token | length > 0
-    fail_msg: "hawser_token is required. Set via -e hawser_token=SECRET or in inventory."
+      - (hawser_token | length > 0) or (hawser_token_file | length > 0)
+    fail_msg: >-
+      hawser_token is required unless hawser_token_file points to a file
+      containing the token. Set via -e hawser_token=SECRET or in inventory.
     quiet: true
 
 - name: Validate mode is valid
