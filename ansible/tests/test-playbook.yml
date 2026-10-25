@@ -17,7 +17,8 @@
   hosts: all
   become: true
   roles:
-    - role: "{{ playbook_dir }}/.."
+    # The role under test lives one level up, so it can only be imported by path.
+    - role: "{{ playbook_dir }}/.."  # noqa: role-name[path]
 
   post_tasks:
     - name: Verify binary exists
@@ -31,14 +32,13 @@
         quiet: true
 
     - name: Verify service is active
-      ansible.builtin.command:
-        cmd: systemctl is-active hawser
+      ansible.builtin.systemd:
+        name: hawser
       register: _test_status
-      changed_when: false
 
     - name: Assert service running
       ansible.builtin.assert:
-        that: _test_status.stdout == "active"
+        that: _test_status.status.ActiveState == "active"
         quiet: true
 
     - name: Verify API responds (standard mode)
