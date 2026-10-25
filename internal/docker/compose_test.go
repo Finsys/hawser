@@ -304,3 +304,73 @@ func TestExecutePassesInheritedEnv(t *testing.T) {
 		t.Errorf("compose env carries LD_PRELOAD: %q", res.Output)
 	}
 }
+
+// fakeCompose returns a client whose compose command appends its arguments to a log file.
+func fakeCompose(t *testing.T, exitCode int) (*ComposeClient, string) {
+	t.Helper()
+	dir := t.TempDir()
+	logFile := dir + "/args.log"
+	script := fmt.Sprintf("#!/bin/sh\necho \"$*\" >> %s\nexit %d\n", logFile, exitCode)
+	if err := os.WriteFile(dir+"/compose", []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return &ComposeClient{composeCmd: dir + "/compose", composeChecked: true, stacksDir: t.TempDir()}, logFile
+}
+
+func readCalls(t *testing.T, logFile string) []string {
+	t.Helper()
+	data, err := os.ReadFile(logFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.Split(strings.TrimSpace(string(data)), "\n")
+}
+
+// docker compose up rejects --no-cache, so a no-cache rebuild must be a separate build.
+func TestUpWithNoBuildCacheBuildsFirst(t *testing.T) {
+	c, logFile := fakeCompose(t, 0)
+	op := &ComposeOperation{Operation: "up", ProjectName: "p", ComposeFile: "services: {}", Build: true, NoBuildCache: true, PullPolicy: "always"}
+	res, err := c.Execute(context.Background(), op, nil)
+	if err != nil || !res.Success {
+		t.Fatalf("Execute: %v %+v", err, res)
+	}
+	calls := readCalls(t, logFile)
+	if len(calls) != 2 {
+		t.Fatalf("want a build then an up, got %q", calls)
+	}
+	if !strings.Contains(calls[0], " build --no-cache") {
+		t.Errorf("first call should be build --no-cache: %q", calls[0])
+	}
+	if !strings.Contains(calls[1], " up -d --remove-orphans") || strings.Contains(calls[1], "--no-cache") || strings.Contains(calls[1], "--build") {
+		t.Errorf("second call should be a plain up: %q", calls[1])
+	}
+	if !strings.Contains(calls[1], "--pull always") {
+		t.Errorf("up keeps the pull policy: %q", calls[1])
+	}
+}
+
+func TestUpWithNoBuildCacheStopsWhenBuildFails(t *testing.T) {
+	c, logFile := fakeCompose(t, 1)
+	op := &ComposeOperation{Operation: "up", ProjectName: "p", ComposeFile: "services: {}", Build: true, NoBuildCache: true}
+	res, err := c.Execute(context.Background(), op, nil)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if res.Success {
+		t.Fatal("a failed build must fail the deploy")
+	}
+	if calls := readCalls(t, logFile); len(calls) != 1 || !strings.Contains(calls[0], " build --no-cache") {
+		t.Fatalf("up must not run after a failed build: %q", calls)
+	}
+}
+
+func TestUpNeverPassesNoCache(t *testing.T) {
+	c, logFile := fakeCompose(t, 0)
+	op := &ComposeOperation{Operation: "up", ProjectName: "p", ComposeFile: "services: {}", NoBuildCache: true}
+	if _, err := c.Execute(context.Background(), op, nil); err != nil {
+		t.Fatal(err)
+	}
+	if calls := readCalls(t, logFile); len(calls) != 1 || strings.Contains(calls[0], "--no-cache") {
+		t.Fatalf("up without build: one call, no --no-cache: %q", calls)
+	}
+}

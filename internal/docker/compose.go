@@ -261,6 +261,33 @@ func teeLines(dst *bytes.Buffer, onLine func(string)) (io.Writer, func()) {
 // use (e.g. Client.sendJSON, which takes its own lock) needs no extra
 // synchronization; a callback with its own mutable state does.
 func (c *ComposeClient) Execute(ctx context.Context, op *ComposeOperation, onLine func(string)) (*ComposeResult, error) {
+	// `docker compose up` has no --no-cache, so a no-cache rebuild runs `build --no-cache`
+	// first and then `up` without building. File deletions go with the build step, so a
+	// file removed from the stack is not in the build context.
+	if op.Operation == "up" && op.Build && op.NoBuildCache {
+		buildOp := *op
+		buildOp.Operation = "build"
+		buildOp.PullBase = false
+		built, err := c.execute(ctx, &buildOp, onLine)
+		if err != nil || !built.Success {
+			return built, err
+		}
+		upOp := *op
+		upOp.Build = false
+		upOp.NoBuildCache = false
+		upOp.FilesToDelete = nil
+		result, err := c.execute(ctx, &upOp, onLine)
+		if result != nil {
+			result.Output = strings.TrimSpace(built.Output + "\n" + result.Output)
+			result.DeletedFiles = built.DeletedFiles
+			result.SkippedFiles = built.SkippedFiles
+		}
+		return result, err
+	}
+	return c.execute(ctx, op, onLine)
+}
+
+func (c *ComposeClient) execute(ctx context.Context, op *ComposeOperation, onLine func(string)) (*ComposeResult, error) {
 	// Detect compose command on first use
 	if err := c.detectComposeCommand(); err != nil {
 		return &ComposeResult{
@@ -416,7 +443,7 @@ func (c *ComposeClient) Execute(ctx context.Context, op *ComposeOperation, onLin
 	// applier — user data and locally modified files are never touched.
 	var deletedFiles []string
 	var skippedFiles []SkippedFile
-	if op.Operation == "up" && len(op.FilesToDelete) > 0 {
+	if (op.Operation == "up" || op.Operation == "build") && len(op.FilesToDelete) > 0 {
 		delDir := stackDir
 		if delDir == "" && c.stacksDir != "" && op.ProjectName != "" {
 			if abs, err := filepath.Abs(filepath.Join(c.stacksDir, op.ProjectName)); err == nil {
@@ -455,9 +482,6 @@ func (c *ComposeClient) Execute(ctx context.Context, op *ComposeOperation, onLin
 		args = append(args, "up", "-d", "--remove-orphans")
 		if op.Build {
 			args = append(args, "--build")
-		}
-		if op.NoBuildCache {
-			args = append(args, "--no-cache")
 		}
 		if op.PullPolicy != "" {
 			args = append(args, "--pull", op.PullPolicy)
