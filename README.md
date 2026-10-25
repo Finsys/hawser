@@ -33,43 +33,40 @@ Standard mode exposes the Docker API. When binding a non-loopback address
 to start to avoid exposing an unauthenticated Docker API to the network:
 
 ```bash
-TOKEN=your-secret-token hawser --port 2376
+TOKEN=your-secret-token hawser
 ```
+
+Hawser takes all its settings from environment variables (see [Configuration](#configuration));
+the only command-line flags are `--help` and `--version`. The port defaults to 2376 (`PORT`).
 
 For a local-only agent you can bind loopback instead of setting a token:
 
 ```bash
-BIND_ADDRESS=127.0.0.1 hawser --port 2376
+BIND_ADDRESS=127.0.0.1 hawser
 ```
 
-**Standard Mode with TLS** (optional, token still required for non-loopback binds):
+**Standard Mode with TLS** (recommended for production; the token is still required for non-loopback binds):
 
 ```bash
-TLS_CERT=/path/to/server.crt TLS_KEY=/path/to/server.key TOKEN=your-secret-token hawser --port 2376
-```
-
-**Standard Mode with TLS and Token** (recommended for production):
-
-```bash
-TLS_CERT=/path/to/server.crt TLS_KEY=/path/to/server.key TOKEN=your-secret-token hawser --port 2376
+TLS_CERT=/path/to/server.crt TLS_KEY=/path/to/server.key TOKEN=your-secret-token hawser
 ```
 
 **Edge Mode:**
 
 ```bash
-hawser --server wss://your-dockhand.example.com/api/hawser/connect --token your-token
+DOCKHAND_SERVER_URL=wss://your-dockhand.example.com/api/hawser/connect TOKEN=your-token hawser
 ```
 
 **Edge Mode with Self-Signed Certificate:**
 
 ```bash
-CA_CERT=/path/to/dockhand-ca.crt hawser --server wss://your-dockhand.example.com/api/hawser/connect --token your-token
+CA_CERT=/path/to/dockhand-ca.crt DOCKHAND_SERVER_URL=wss://your-dockhand.example.com/api/hawser/connect TOKEN=your-token hawser
 ```
 
 **Edge Mode with TLS Skip Verify** (insecure, for testing):
 
 ```bash
-TLS_SKIP_VERIFY=true hawser --server wss://your-dockhand.example.com/api/hawser/connect --token your-token
+TLS_SKIP_VERIFY=true DOCKHAND_SERVER_URL=wss://your-dockhand.example.com/api/hawser/connect TOKEN=your-token hawser
 ```
 
 ### Systemd Service
@@ -82,11 +79,20 @@ TLS_SKIP_VERIFY=true hawser --server wss://your-dockhand.example.com/api/hawser/
 curl -fsSL https://raw.githubusercontent.com/Finsys/hawser/main/scripts/install.sh | bash
 ```
 
+The installer honours `HAWSER_VERSION` (default: the latest release) and `STACKS_DIR` (default
+`/data/stacks`); pass them to `bash`, e.g. `curl ... | HAWSER_VERSION=0.2.52 STACKS_DIR=/srv/stacks bash`.
+`STACKS_DIR` sets the directory the service may write to, and is written into the config only when
+`/etc/hawser/config` does not exist yet. On Alpine (OpenRC) it installs an init script instead of a
+systemd unit, with logs in `/var/log/hawser.log`.
+
 2. Configure the service:
 
 ```bash
 sudo nano /etc/hawser/config
 ```
+
+The installer's config contains `TOKEN=change-me-before-starting`. Replace it with your own token
+(or the Edge token from Dockhand) before starting the service.
 
 Example config for **Standard Mode**:
 
@@ -111,9 +117,20 @@ TOKEN=your-agent-token
 sudo systemctl enable --now hawser
 ```
 
+#### Upgrading
+
+Run the installer again, then restart the service:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Finsys/hawser/main/scripts/install.sh | bash
+sudo systemctl restart hawser
+```
+
+The installer replaces the binary and rewrites the systemd unit, and keeps `/etc/hawser/config`. Replacing only the binary leaves the old unit in place, so changes to the unit (such as the writable Docker config directory needed for private registry pulls and compose builds) do not take effect. To pin a version, set `HAWSER_VERSION`, e.g. `curl ... | HAWSER_VERSION=0.2.52 bash`.
+
 #### Full Systemd Service File
 
-If you prefer to set up the systemd service manually, here's the complete service file:
+If you prefer to set up the systemd service manually, here's the complete service file (the same unit the installer writes):
 
 **`/etc/systemd/system/hawser.service`**
 
@@ -136,6 +153,8 @@ EnvironmentFile=/etc/hawser/config
 NoNewPrivileges=false
 ProtectSystem=strict
 ProtectHome=true
+# docker login, compose and buildx need a writable config dir and temp dir, which the
+# two lines above take away. /run/hawser is tmpfs: registry logins never reach the disk.
 RuntimeDirectory=hawser
 Environment=DOCKER_CONFIG=/run/hawser TMPDIR=/run/hawser
 ReadWritePaths=/var/run/docker.sock -/data/stacks
@@ -187,7 +206,7 @@ DOCKER_SOCKET=/var/run/docker.sock
 # Agent identification (optional)
 # AGENT_NAME=my-server
 
-# Edge mode only needs port 2376 open for Docker's HEALTHCHECK directive.
+# Edge mode only listens for its health check (on PORT, default 2376).
 # Restrict it to localhost so the host has no externally-reachable surface:
 # BIND_ADDRESS=127.0.0.1
 
@@ -195,7 +214,7 @@ DOCKER_SOCKET=/var/run/docker.sock
 # CA_CERT=/etc/hawser/dockhand-ca.crt
 # TLS_SKIP_VERIFY=false
 
-# Connection settings (optional)
+# Connection settings (optional, Edge mode)
 # HEARTBEAT_INTERVAL=30
 # REQUEST_TIMEOUT=30
 # COMPOSE_TIMEOUT=900
@@ -208,8 +227,9 @@ DOCKER_SOCKET=/var/run/docker.sock
 **Manual installation steps:**
 
 ```bash
-# 1. Download binary
-curl -fsSL https://github.com/Finsys/hawser/releases/latest/download/hawser_linux_amd64.tar.gz | tar xz
+# 1. Download binary (release archives carry the version; use arm64 or armv7 as needed)
+VER=0.2.52
+curl -fsSL https://github.com/Finsys/hawser/releases/download/v${VER}/hawser_${VER}_linux_amd64.tar.gz | tar xz
 sudo install -m 755 hawser /usr/local/bin/hawser
 
 # 2. Create config and stacks directories
@@ -221,6 +241,7 @@ sudo mkdir -p /etc/hawser /data/stacks
 # 3. Create config file (edit with your settings)
 sudo tee /etc/hawser/config << 'EOF'
 PORT=2376
+TOKEN=your-secret-token
 DOCKER_SOCKET=/var/run/docker.sock
 EOF
 # The config can hold a TOKEN, so restrict it to root
@@ -244,9 +265,12 @@ Restart=always
 RestartSec=10
 EnvironmentFile=/etc/hawser/config
 
+# Security hardening
 NoNewPrivileges=false
 ProtectSystem=strict
 ProtectHome=true
+# docker login, compose and buildx need a writable config dir and temp dir, which the
+# two lines above take away. /run/hawser is tmpfs: registry logins never reach the disk.
 RuntimeDirectory=hawser
 Environment=DOCKER_CONFIG=/run/hawser TMPDIR=/run/hawser
 ReadWritePaths=/var/run/docker.sock -/data/stacks
@@ -274,6 +298,10 @@ sudo journalctl -u hawser -f
 >
 > If your stacks only use named volumes or absolute paths, a named volume (`-v hawser_stacks:/data/stacks`) works fine.
 
+> **Read-only containers:** with `--read-only`, `docker login` and `docker compose build` have no writable
+> Docker config directory or temp directory, so private registry pulls and image builds fail. Give them a tmpfs:
+> `--tmpfs /run/hawser -e DOCKER_CONFIG=/run/hawser -e TMPDIR=/run/hawser`.
+
 **Standard Mode** - Agent listens for connections:
 
 A `TOKEN` is required because the container publishes the port on a non-loopback
@@ -292,37 +320,7 @@ docker run -d \
   ghcr.io/finsys/hawser:latest
 ```
 
-**Standard Mode with Token Authentication:**
-
-```bash
-docker run -d \
-  --name hawser \
-  --restart unless-stopped \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -v /opt/hawser-stacks:/opt/hawser-stacks \
-  -e STACKS_DIR=/opt/hawser-stacks \
-  -p 2376:2376 \
-  -e TOKEN=your-secret-token \
-  ghcr.io/finsys/hawser:latest
-```
-
-**Standard Mode with TLS** (optional):
-
-```bash
-docker run -d \
-  --name hawser \
-  --restart unless-stopped \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -v /opt/hawser-stacks:/opt/hawser-stacks \
-  -e STACKS_DIR=/opt/hawser-stacks \
-  -v /path/to/certs:/certs:ro \
-  -p 2376:2376 \
-  -e TLS_CERT=/certs/server.crt \
-  -e TLS_KEY=/certs/server.key \
-  ghcr.io/finsys/hawser:latest
-```
-
-**Standard Mode with TLS and Token** (recommended for production):
+**Standard Mode with TLS** (recommended for production):
 
 ```bash
 docker run -d \
@@ -388,6 +386,7 @@ docker run -d \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v /opt/hawser-stacks:/opt/hawser-stacks \
   -e STACKS_DIR=/opt/hawser-stacks \
+  -e TOKEN=your-secret-token \
   -p 2376:2376 \
   hawser:local
 
@@ -407,7 +406,7 @@ docker run -d \
 
 ### Multi-architecture builds
 
-The official images on `ghcr.io/finsys/hawser` are multi-arch (amd64 + arm64). For local multi-arch builds:
+The official images on `ghcr.io/finsys/hawser` are multi-arch (amd64, arm64 and armv7; the armv7 image uses an Alpine base). For local multi-arch builds:
 
 ```bash
 # Create a builder (first time only)
@@ -441,6 +440,9 @@ curl http://localhost:2376/_hawser/health
 curl http://localhost:2376/_hawser/health
 {"status":"healthy","mode":"edge","connected":true}
 ```
+
+In Edge mode the endpoint answers 200 with `"connected":false` while the agent is reconnecting. With
+`TLS_CERT` set, the built-in check uses `https`.
 
 **Container status:**
 
@@ -488,15 +490,15 @@ Hawser is configured via environment variables:
 | `TLS_KEY` | Path to TLS private key (Standard mode server key) | - |
 | `BIND_ADDRESS` | Address to bind to (use `127.0.0.1` to restrict to localhost) | `0.0.0.0` |
 | `ALLOW_INSECURE_NO_AUTH` | Permit Standard mode to bind a non-loopback address with no `TOKEN` (insecure; only for networks isolated by other means) | `false` |
-| `DOCKER_SOCKET` | Docker socket path | `/var/run/docker.sock` |
+| `DOCKER_SOCKET` | Docker socket path | First existing of `/var/run/docker.sock`, `~/.docker/run/docker.sock`, `~/.orbstack/run/docker.sock`, `/run/docker.sock` |
 | `STACKS_DIR` | Directory for compose stack files (requires Dockhand 1.0.5+). Use a host path bind mount with matching paths if stacks use relative file bind mounts. | `/data/stacks` |
-| `AGENT_ID` | Unique agent identifier | Auto-generated UUID |
+| `AGENT_ID` | Unique agent identifier. Set it to keep the same ID across restarts. | New UUID on every start |
 | `AGENT_NAME` | Human-readable agent name | Hostname |
-| `HEARTBEAT_INTERVAL` | Heartbeat interval in seconds | `30` |
+| `HEARTBEAT_INTERVAL` | Heartbeat interval in seconds (Edge mode) | `30` |
 | `REQUEST_TIMEOUT` | Request timeout in seconds (raise for slow storage such as ZFS syncfs, which can make a container recreate exceed 30s) | `30` |
-| `COMPOSE_TIMEOUT` | Compose operation timeout in seconds (up/down/pull can run far longer than a normal request) | `900` |
+| `COMPOSE_TIMEOUT` | Compose operation timeout in seconds (Edge mode; up/down/pull can run far longer than a normal request) | `900` |
 | `RECONNECT_DELAY` | Initial reconnect delay (Edge mode) | `1` |
-| `MAX_RECONNECT_DELAY` | Maximum reconnect delay | `60` |
+| `MAX_RECONNECT_DELAY` | Maximum reconnect delay (Edge mode) | `60` |
 | `WELCOME_TIMEOUT` | Timeout in seconds waiting for welcome after hello (Edge mode) | `30` |
 | `MAX_MESSAGE_SIZE_MB` | Max inbound WebSocket message size in MiB (Edge mode). Bounds the stack-files payload a git deploy can send; raise for very large repos on a well-resourced agent, lower to cap memory on a small edge host. | `256` |
 | `LOG_LEVEL` | Logging level: `debug`, `info`, `warn`, `error` | `info` |
@@ -506,7 +508,7 @@ Hawser is configured via environment variables:
 
 Hawser automatically detects the operational mode:
 
-- If `DOCKHAND_SERVER_URL` and `TOKEN` are set → **Edge Mode**
+- If `DOCKHAND_SERVER_URL` is set → **Edge Mode**. It must start with `ws://` or `wss://`, and `TOKEN` (or `TOKEN_FILE`) is required; without it Hawser refuses to start.
 - Otherwise → **Standard Mode**
 
 ### Log Levels
@@ -517,14 +519,14 @@ The `LOG_LEVEL` environment variable controls verbosity:
 |-------|-------------|
 | `debug` | All messages including Docker API calls (method, path, status codes) |
 | `info` | Standard operational messages (connections, startup, shutdown) |
-| `warn` | Warnings only |
+| `warn` | Warnings and errors (`warning` is accepted too) |
 | `error` | Errors only |
 
 **Example: Debug mode**
 
 ```bash
 # Binary
-LOG_LEVEL=debug hawser --port 2376
+LOG_LEVEL=debug TOKEN=your-secret-token hawser
 
 # Docker
 docker run -d \
@@ -532,6 +534,7 @@ docker run -d \
   --restart unless-stopped \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -p 2376:2376 \
+  -e TOKEN=your-secret-token \
   -e LOG_LEVEL=debug \
   ghcr.io/finsys/hawser:latest
 ```
@@ -554,9 +557,11 @@ Hawser provides full access to the Docker API:
 
 Hawser includes Docker Compose support for stack operations:
 
-- `up` - Deploy stack
+- `up` - Deploy stack (optionally building images, without cache, with a pull policy or force-recreate)
 - `down` - Remove stack
 - `pull` - Pull images
+- `build` - Build images, optionally pulling newer base images (`--pull`) or without cache
+- `restart`, `stop`, `start` - Lifecycle operations
 - `ps` - List services
 - `logs` - View logs
 
@@ -564,10 +569,11 @@ Hawser includes Docker Compose support for stack operations:
 
 Hawser collects and reports host metrics:
 
-- CPU usage (per-core and total)
+- CPU usage (total, Linux only) and core count
 - Memory (total, used, available)
 - Disk usage (Docker data directory)
 - Network I/O statistics
+- Uptime
 
 Metrics are sent every 30 seconds in Edge mode.
 
@@ -579,13 +585,15 @@ To disable disk usage collection, set the `SKIP_DF_COLLECTION` environment varia
 
 ```bash
 # Binary
-SKIP_DF_COLLECTION=1 hawser --port 2376
+SKIP_DF_COLLECTION=1 TOKEN=your-secret-token hawser
 
 # Docker
 docker run -d \
   --name hawser \
   --restart unless-stopped \
   -v /var/run/docker.sock:/var/run/docker.sock \
+  -p 2376:2376 \
+  -e TOKEN=your-secret-token \
   -e SKIP_DF_COLLECTION=1 \
   ghcr.io/finsys/hawser:latest
 
@@ -609,12 +617,15 @@ Hawser automatically negotiates the Docker API version with the daemon. When run
 
 ### Standard Mode
 
-In Standard mode, Hawser proxies all Docker API endpoints plus:
+In Standard mode, Hawser proxies all Docker API endpoints plus the ones below. Every request except
+`/_hawser/health` must carry the token in the `X-Hawser-Token` header; after 10 failed attempts in a
+minute an IP is answered with 429.
 
 | Endpoint | Description |
 |----------|-------------|
 | `/_hawser/health` | Health check (no auth required) |
 | `/_hawser/info` | Agent information |
+| `POST /_hawser/compose` | Run a compose operation (used by Dockhand) |
 
 ### Health Check
 
@@ -652,7 +663,7 @@ curl http://localhost:2376/_hawser/health
    head -c 32 /dev/urandom | base64
    ```
 
-   Use at least 24 characters. Tokens are hashed with Argon2id on the Dockhand side, so length and randomness matter more than character set.
+   Use at least 24 characters; length and randomness matter more than character set. Dockhand stores Edge tokens hashed with Argon2id, and Standard-mode tokens encrypted, because it has to send them to the agent.
 
 ## Building from Source
 
@@ -665,14 +676,16 @@ cd hawser
 go build -o hawser ./cmd/hawser
 
 # Run (loopback bind needs no token; use TOKEN=... to bind all interfaces)
-BIND_ADDRESS=127.0.0.1 ./hawser --port 2376
+BIND_ADDRESS=127.0.0.1 ./hawser
 ```
 
 ## Docker Build
 
 ```bash
-docker build -t hawser .
+docker build -f Dockerfile.dev -t hawser .
 ```
+
+The plain `Dockerfile` is for release builds and expects a binary pre-built by GoReleaser.
 
 ## Contributing
 
