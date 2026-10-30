@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -416,4 +417,113 @@ func TestUpNeverPassesNoCache(t *testing.T) {
 	if calls := readCalls(t, logFile); len(calls) != 1 || strings.Contains(calls[0], "--no-cache") {
 		t.Fatalf("up without build: one call, no --no-cache: %q", calls)
 	}
+}
+
+// writeStackFiles must preserve the executable bit for files that carry one
+// (git stacks over Hawser used to always write 0644, breaking COPY+RUN scripts).
+func TestWriteStackFilesExecutableBit(t *testing.T) {
+	dir := t.TempDir()
+	files := map[string]string{
+		"script.sh":    "#!/bin/sh\necho hi\n",
+		"readme.txt":   "plain",
+		"nested/tool":  "#!/bin/sh\n",
+		"bin/data.bin": "base64:" + base64.StdEncoding.EncodeToString([]byte{0, 1, 2}),
+	}
+	modes := map[string]uint32{
+		"script.sh":   0755,
+		"nested/tool": 0755,
+		// readme.txt and bin/data.bin have no entry -> must be 0644.
+	}
+	if err := writeStackFiles(dir, files, modes); err != nil {
+		t.Fatalf("writeStackFiles: %v", err)
+	}
+
+	check := func(rel string, want os.FileMode) {
+		t.Helper()
+		fi, err := os.Stat(filepath.Join(dir, rel))
+		if err != nil {
+			t.Fatalf("stat %s: %v", rel, err)
+		}
+		if got := fi.Mode().Perm(); got != want {
+			t.Errorf("%s: mode = %o, want %o", rel, got, want)
+		}
+	}
+	check("script.sh", 0755)
+	check("nested/tool", 0755)
+	check("readme.txt", 0644)
+	check("bin/data.bin", 0644)
+
+	// Binary content survived the base64 round-trip.
+	got, _ := os.ReadFile(filepath.Join(dir, "bin/data.bin"))
+	if !bytes.Equal(got, []byte{0, 1, 2}) {
+		t.Errorf("bin/data.bin content = %v, want [0 1 2]", got)
+	}
+}
+
+// A nil modes map (an older Dockhand that sends no fileModes) must reproduce the
+// pre-feature behavior: every file 0644, nothing executable.
+func TestWriteStackFilesNilModesIs0644(t *testing.T) {
+	dir := t.TempDir()
+	if err := writeStackFiles(dir, map[string]string{"a.sh": "x", "b": "y"}, nil); err != nil {
+		t.Fatalf("writeStackFiles: %v", err)
+	}
+	for _, rel := range []string{"a.sh", "b"} {
+		fi, err := os.Stat(filepath.Join(dir, rel))
+		if err != nil {
+			t.Fatalf("stat %s: %v", rel, err)
+		}
+		if got := fi.Mode().Perm(); got != 0644 {
+			t.Errorf("%s: mode = %o, want 0644 (nil modes must not set exec bit)", rel, got)
+		}
+	}
+}
+
+// On a re-deploy the target file already exists; os.WriteFile keeps the old mode
+// on an existing file, so without the explicit Chmod the exec bit would be lost.
+func TestWriteStackFilesRedeployUpdatesMode(t *testing.T) {
+	dir := t.TempDir()
+	// First deploy: not executable.
+	if err := writeStackFiles(dir, map[string]string{"s.sh": "v1"}, nil); err != nil {
+		t.Fatalf("first writeStackFiles: %v", err)
+	}
+	if got := statPerm(t, dir, "s.sh"); got != 0644 {
+		t.Fatalf("after first deploy mode = %o, want 0644", got)
+	}
+	// Second deploy of the SAME path now carries the exec bit.
+	if err := writeStackFiles(dir, map[string]string{"s.sh": "v2"}, map[string]uint32{"s.sh": 0755}); err != nil {
+		t.Fatalf("redeploy writeStackFiles: %v", err)
+	}
+	if got := statPerm(t, dir, "s.sh"); got != 0755 {
+		t.Errorf("after redeploy mode = %o, want 0755 (exec bit must be set on an existing file)", got)
+	}
+	// And the reverse: a formerly-exec file losing its bit on redeploy.
+	if err := writeStackFiles(dir, map[string]string{"s.sh": "v3"}, nil); err != nil {
+		t.Fatalf("third writeStackFiles: %v", err)
+	}
+	if got := statPerm(t, dir, "s.sh"); got != 0644 {
+		t.Errorf("after bit removed mode = %o, want 0644", got)
+	}
+}
+
+func TestWriteStackFilesRejectsTraversal(t *testing.T) {
+	dir := t.TempDir()
+	err := writeStackFiles(dir, map[string]string{"../escape": "nope"}, nil)
+	if err == nil {
+		t.Fatal("expected traversal rejection, got nil")
+	}
+	if !strings.Contains(err.Error(), "traversal") {
+		t.Errorf("error = %q, want a traversal rejection", err.Error())
+	}
+	if _, statErr := os.Stat(filepath.Join(filepath.Dir(dir), "escape")); statErr == nil {
+		t.Error("traversal file was written outside stackDir")
+	}
+}
+
+func statPerm(t *testing.T, dir, rel string) os.FileMode {
+	t.Helper()
+	fi, err := os.Stat(filepath.Join(dir, rel))
+	if err != nil {
+		t.Fatalf("stat %s: %v", rel, err)
+	}
+	return fi.Mode().Perm()
 }

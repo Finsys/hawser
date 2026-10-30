@@ -126,6 +126,7 @@ type ComposeOperation struct {
 	ComposeFile     string                `json:"composeFile,omitempty"`     // Content of compose file
 	ComposeFileName string                `json:"composeFileName,omitempty"` // Explicit compose filename to use (e.g., "docker-compose.prod.yml")
 	Files           map[string]string     `json:"files,omitempty"`           // All files to write (relative path -> content)
+	FileModes       map[string]uint32     `json:"fileModes,omitempty"`       // Sparse exec-bit modes (relative path -> mode); absent entry means 0644
 	Services        []string              `json:"services,omitempty"`        // Specific services to operate on
 	Options         map[string]string     `json:"options,omitempty"`         // Additional options
 	EnvVars         map[string]string     `json:"envVars,omitempty"`         // Environment variables for variable substitution
@@ -260,6 +261,61 @@ func teeLines(dst *bytes.Buffer, onLine func(string)) (io.Writer, func()) {
 // A callback that only forwards to something already safe for concurrent
 // use (e.g. Client.sendJSON, which takes its own lock) needs no extra
 // synchronization; a callback with its own mutable state does.
+
+// writeStackFiles materializes a stack's files under stackDir. files maps a
+// relative path to its content (base64:-prefixed for binary); modes is a sparse
+// relative-path -> mode map carrying the executable bit for the few files that
+// have one. A path with no mode entry, or a nil modes map, is written 0644.
+// Every path is validated to stay within stackDir before anything is written.
+func writeStackFiles(stackDir string, files map[string]string, modes map[string]uint32) error {
+	for relPath, content := range files {
+		absFilePath, err := filepath.Abs(filepath.Join(stackDir, relPath))
+		if err != nil {
+			return fmt.Errorf("Failed to resolve path for %s: %v", relPath, err)
+		}
+		if !strings.HasPrefix(absFilePath, stackDir+string(os.PathSeparator)) && absFilePath != stackDir {
+			return fmt.Errorf("Path traversal rejected: %s escapes stack directory", relPath)
+		}
+
+		if dir := filepath.Dir(absFilePath); dir != stackDir {
+			if err := os.MkdirAll(dir, 0755); err != nil {
+				return fmt.Errorf("Failed to create directory for %s: %v", relPath, err)
+			}
+		}
+
+		// Decode content: base64-prefixed values contain binary data.
+		var fileBytes []byte
+		if strings.HasPrefix(content, "base64:") {
+			decoded, err := base64.StdEncoding.DecodeString(content[7:])
+			if err != nil {
+				return fmt.Errorf("Failed to decode base64 content for %s: %v", relPath, err)
+			}
+			fileBytes = decoded
+		} else {
+			fileBytes = []byte(content)
+		}
+
+		// An executable file in the git checkout carries its exec bit via modes
+		// (sparse: only executables have an entry). Without an entry, fall back to 0644.
+		mode := os.FileMode(0644)
+		if m, ok := modes[relPath]; ok {
+			mode = os.FileMode(m).Perm()
+		}
+
+		if err := os.WriteFile(absFilePath, fileBytes, mode); err != nil {
+			return fmt.Errorf("Failed to write file %s: %v", relPath, err)
+		}
+		// os.WriteFile applies the mode only when it creates the file (and even then
+		// subject to umask), so on a re-deploy of an existing file the bit would be
+		// lost. Set it explicitly.
+		if err := os.Chmod(absFilePath, mode); err != nil {
+			return fmt.Errorf("Failed to set mode on %s: %v", relPath, err)
+		}
+		log.Debugf("Compose: Wrote file %s to %s (mode %o)", relPath, absFilePath, mode)
+	}
+	return nil
+}
+
 func (c *ComposeClient) Execute(ctx context.Context, op *ComposeOperation, onLine func(string)) (*ComposeResult, error) {
 	// `docker compose up` has no --no-cache, so a no-cache rebuild runs `build --no-cache`
 	// first and then `up --build`, which is a cache hit. `up` must keep --build: without it
@@ -339,62 +395,12 @@ func (c *ComposeClient) execute(ctx context.Context, op *ComposeOperation, onLin
 		}
 
 		// Write all files
-		for relPath, content := range op.Files {
-			filePath := filepath.Join(stackDir, relPath)
-
-			// Path traversal protection: ensure resolved path stays within stackDir
-			absFilePath, err := filepath.Abs(filePath)
-			if err != nil {
-				return &ComposeResult{
-					Success:  false,
-					Error:    fmt.Sprintf("Failed to resolve path for %s: %v", relPath, err),
-					ExitCode: 1,
-				}, nil
-			}
-			if !strings.HasPrefix(absFilePath, stackDir+string(os.PathSeparator)) && absFilePath != stackDir {
-				return &ComposeResult{
-					Success:  false,
-					Error:    fmt.Sprintf("Path traversal rejected: %s escapes stack directory", relPath),
-					ExitCode: 1,
-				}, nil
-			}
-
-			// Create parent directories if needed
-			if dir := filepath.Dir(absFilePath); dir != stackDir {
-				if err := os.MkdirAll(dir, 0755); err != nil {
-					return &ComposeResult{
-						Success:  false,
-						Error:    fmt.Sprintf("Failed to create directory for %s: %v", relPath, err),
-						ExitCode: 1,
-					}, nil
-				}
-			}
-
-			// Decode content: base64-prefixed values contain binary data
-			var fileBytes []byte
-			if strings.HasPrefix(content, "base64:") {
-				decoded, err := base64.StdEncoding.DecodeString(content[7:])
-				if err != nil {
-					return &ComposeResult{
-						Success:  false,
-						Error:    fmt.Sprintf("Failed to decode base64 content for %s: %v", relPath, err),
-						ExitCode: 1,
-					}, nil
-				}
-				fileBytes = decoded
-			} else {
-				fileBytes = []byte(content)
-			}
-
-			// Write file using validated absolute path
-			if err := os.WriteFile(absFilePath, fileBytes, 0644); err != nil {
-				return &ComposeResult{
-					Success:  false,
-					Error:    fmt.Sprintf("Failed to write file %s: %v", relPath, err),
-					ExitCode: 1,
-				}, nil
-			}
-			log.Debugf("Compose: Wrote file %s to %s", relPath, absFilePath)
+		if err := writeStackFiles(stackDir, op.Files, op.FileModes); err != nil {
+			return &ComposeResult{
+				Success:  false,
+				Error:    err.Error(),
+				ExitCode: 1,
+			}, nil
 		}
 
 		log.Debugf("Compose: Wrote %d files to %s", len(op.Files), stackDir)
