@@ -562,32 +562,32 @@ docker run -d \
 
 Hawser is configured via environment variables:
 
-| Variable                 | Description                                                                                                                                                                                                  | Default                                                                                                                  |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
-| `DOCKHAND_SERVER_URL`    | WebSocket URL for Edge mode                                                                                                                                                                                  | -                                                                                                                        |
-| `TOKEN`                  | Authentication token. Required in Edge mode, and in Standard mode when binding a non-loopback address.                                                                                                       | -                                                                                                                        |
-| `TOKEN_FILE`             | Path to a file containing the authentication token (takes precedence over `TOKEN`, e.g., for Docker Secrets).                                                                                                | -                                                                                                                        |
-| `CA_CERT`                | Path to CA certificate for Edge mode (self-signed Dockhand)                                                                                                                                                  | -                                                                                                                        |
-| `TLS_SKIP_VERIFY`        | Skip TLS verification for Edge mode (insecure)                                                                                                                                                               | `false`                                                                                                                  |
-| `PORT`                   | HTTP server port (Standard mode)                                                                                                                                                                             | `2376`                                                                                                                   |
-| `TLS_CERT`               | Path to TLS certificate (Standard mode server cert)                                                                                                                                                          | -                                                                                                                        |
-| `TLS_KEY`                | Path to TLS private key (Standard mode server key)                                                                                                                                                           | -                                                                                                                        |
-| `BIND_ADDRESS`           | Address to bind to (use `127.0.0.1` to restrict to localhost)                                                                                                                                                | `0.0.0.0`                                                                                                                |
-| `ALLOW_INSECURE_NO_AUTH` | Permit Standard mode to bind a non-loopback address with no `TOKEN` (insecure; only for networks isolated by other means)                                                                                    | `false`                                                                                                                  |
-| `DOCKER_SOCKET`          | Docker socket path                                                                                                                                                                                           | First existing of `/var/run/docker.sock`, `~/.docker/run/docker.sock`, `~/.orbstack/run/docker.sock`, `/run/docker.sock` |
-| `DOCKER_HOST`            | A `unix://` path is used as the socket when `DOCKER_SOCKET` is not set. Hawser only talks to a Unix socket: any other value (e.g. `tcp://`) is ignored with a warning.                                       | -                                                                                                                        |
-| `STACKS_DIR`             | Directory for compose stack files (requires Dockhand 1.0.5+). Use a host path bind mount with matching paths if stacks use relative file bind mounts.                                                        | `/data/stacks`                                                                                                           |
-| `AGENT_ID`               | Unique agent identifier. Set it to keep the same ID across restarts.                                                                                                                                         | New UUID on every start                                                                                                  |
-| `AGENT_NAME`             | Human-readable agent name                                                                                                                                                                                    | Hostname                                                                                                                 |
-| `HEARTBEAT_INTERVAL`     | Heartbeat interval in seconds (Edge mode)                                                                                                                                                                    | `30`                                                                                                                     |
-| `REQUEST_TIMEOUT`        | Request timeout in seconds (raise for slow storage such as ZFS syncfs, which can make a container recreate exceed 30s)                                                                                       | `30`                                                                                                                     |
-| `COMPOSE_TIMEOUT`        | Compose operation timeout in seconds (Edge mode; up/down/pull can run far longer than a normal request)                                                                                                      | `900`                                                                                                                    |
-| `RECONNECT_DELAY`        | Initial reconnect delay (Edge mode)                                                                                                                                                                          | `1`                                                                                                                      |
-| `MAX_RECONNECT_DELAY`    | Maximum reconnect delay (Edge mode)                                                                                                                                                                          | `60`                                                                                                                     |
-| `WELCOME_TIMEOUT`        | Timeout in seconds waiting for welcome after hello (Edge mode)                                                                                                                                               | `30`                                                                                                                     |
-| `MAX_MESSAGE_SIZE_MB`    | Max inbound WebSocket message size in MiB (Edge mode). Bounds the stack-files payload a git deploy can send; raise for very large repos on a well-resourced agent, lower to cap memory on a small edge host. | `256`                                                                                                                    |
-| `LOG_LEVEL`              | Logging level: `debug`, `info`, `warn`, `error`                                                                                                                                                              | `info`                                                                                                                   |
-| `SKIP_DF_COLLECTION`     | Skip disk usage collection (see below)                                                                                                                                                                       | -                                                                                                                        |
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `DOCKHAND_SERVER_URL` | WebSocket URL for Edge mode | - |
+| `TOKEN` | Authentication token. Required in Edge mode, and in Standard mode when binding a non-loopback address. | - |
+| `TOKEN_FILE` | Path to a file containing the authentication token (takes precedence over `TOKEN`, e.g., for Docker Secrets). | - |
+| `CA_CERT` | Path to CA certificate for Edge mode (self-signed Dockhand) | - |
+| `TLS_SKIP_VERIFY` | Skip TLS verification for Edge mode (insecure) | `false` |
+| `PORT` | HTTP server port (Standard mode) | `2376` |
+| `TLS_CERT` | Path to TLS certificate (Standard mode server cert) | - |
+| `TLS_KEY` | Path to TLS private key (Standard mode server key) | - |
+| `BIND_ADDRESS` | Address to bind to (use `127.0.0.1` to restrict to localhost) | `0.0.0.0` |
+| `ALLOW_INSECURE_NO_AUTH` | Permit Standard mode to bind a non-loopback address with no `TOKEN` (insecure; only for networks isolated by other means) | `false` |
+| `DOCKER_SOCKET` | Docker socket path | First existing of `/var/run/docker.sock`, `~/.docker/run/docker.sock`, `~/.orbstack/run/docker.sock`, `/run/docker.sock` |
+| `DOCKER_HOST` | A `unix://` path is used as the socket when `DOCKER_SOCKET` is not set. Hawser only talks to a Unix socket: any other value (e.g. `tcp://`) is ignored with a warning. | - |
+| `STACKS_DIR` | Directory for compose stack files (requires Dockhand 1.0.5+). Use a host path bind mount with matching paths if stacks use relative file bind mounts. | `/data/stacks` |
+| `AGENT_ID` | Unique agent identifier. Set it to keep the same ID across restarts. | New UUID on every start |
+| `AGENT_NAME` | Human-readable agent name | Hostname |
+| `HEARTBEAT_INTERVAL` | Heartbeat interval in seconds (Edge mode) | `30` |
+| `REQUEST_TIMEOUT` | Request timeout in seconds (raise for slow storage such as ZFS syncfs, which can make a container recreate exceed 30s) | `30` |
+| `COMPOSE_TIMEOUT` | Compose operation timeout in seconds (Edge mode; up/down/pull can run far longer than a normal request) | `900` |
+| `RECONNECT_DELAY` | Initial reconnect delay (Edge mode) | `1` |
+| `MAX_RECONNECT_DELAY` | Maximum reconnect delay (Edge mode) | `60` |
+| `WELCOME_TIMEOUT` | Timeout in seconds waiting for welcome after hello (Edge mode) | `30` |
+| `MAX_MESSAGE_SIZE_MB` | Max inbound WebSocket message size in MiB (Edge mode). Bounds the stack-files payload a git deploy can send; raise for very large repos on a well-resourced agent, lower to cap memory on a small edge host. | `256` |
+| `LOG_LEVEL` | Logging level: `debug`, `info`, `warn`, `error` | `info` |
+| `SKIP_DF_COLLECTION` | Skip disk usage collection (see below) | - |
 
 ### Mode Detection
 
@@ -600,12 +600,12 @@ Hawser automatically detects the operational mode:
 
 The `LOG_LEVEL` environment variable controls verbosity:
 
-| Level   | Description                                                          |
-| ------- | -------------------------------------------------------------------- |
+| Level | Description |
+|-------|-------------|
 | `debug` | All messages including Docker API calls (method, path, status codes) |
-| `info`  | Standard operational messages (connections, startup, shutdown)       |
-| `warn`  | Warnings and errors (`warning` is accepted too)                      |
-| `error` | Errors only                                                          |
+| `info` | Standard operational messages (connections, startup, shutdown) |
+| `warn` | Warnings and errors (`warning` is accepted too) |
+| `error` | Errors only |
 
 **Example: Debug mode**
 
@@ -707,10 +707,10 @@ In Standard mode, Hawser proxies all Docker API endpoints plus the ones below. W
 every request except `/_hawser/health` must carry it in the `X-Hawser-Token` header. After 10 failed
 attempts within a minute, that IP gets 429 (even with the right token) until the minute has passed.
 
-| Endpoint                | Description                                |
-| ----------------------- | ------------------------------------------ |
-| `/_hawser/health`       | Health check (no auth required)            |
-| `/_hawser/info`         | Agent information                          |
+| Endpoint | Description |
+|----------|-------------|
+| `/_hawser/health` | Health check (no auth required) |
+| `/_hawser/info` | Agent information |
 | `POST /_hawser/compose` | Run a compose operation (used by Dockhand) |
 
 ### Health Check
