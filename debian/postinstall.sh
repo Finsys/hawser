@@ -148,6 +148,11 @@ EOF
     fi
   fi
 
+  # The config is now the source of truth, including on upgrades. Don't keep
+  # another copy of either token in the debconf database.
+  db_reset hawser/token
+  db_reset hawser/edge_token
+
   # Release debconf before starting the daemon.
   db_stop
 fi
