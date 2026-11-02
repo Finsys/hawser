@@ -126,6 +126,7 @@ nfpms:
         dst: /usr/share/doc/hawser/copyright
         packager: deb
     scripts:
+      preinstall: ./debian/preinstall.sh
       postinstall: ./debian/postinstall.sh
       preremove: ./debian/prerm.sh
       postremove: ./debian/postrm.sh
