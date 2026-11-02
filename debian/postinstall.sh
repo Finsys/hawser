@@ -125,7 +125,7 @@ EOF
       write_setting AGENT_ID "$(cat /proc/sys/kernel/random/uuid)"
     } >"$CONFIG_FILE.dpkg-new"
     chmod 0600 "$CONFIG_FILE.dpkg-new"
-    chown "$SERVICE_USER":"$SERVICE_USER" "$CONFIG_FILE.dpkg-new"
+    chown root:root "$CONFIG_FILE.dpkg-new"
     mv "$CONFIG_FILE.dpkg-new" "$CONFIG_FILE"
 
     # config.sh can't re-prompt with a noninteractive frontend, so edge settings
