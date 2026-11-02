@@ -22,6 +22,62 @@ Hawser is a lightweight Go agent that enables Dockhand to manage Docker hosts in
 
 ## Quick Start
 
+### Debian Package
+
+Download the `.deb` for your architecture (`amd64`, `arm64`, or `armv7`)
+from [GitHub Releases](https://github.com/Finsys/hawser/releases), then install it:
+
+```bash
+sudo apt install ./hawser_<version>_linux_<architecture>.deb
+```
+
+Installation asks for Standard or Edge mode and the connection settings.
+
+- Standard mode generates an authentication token if you leave it empty
+- Edge mode needs the server URL and token from Dockhand.
+
+The package starts and enables the systemd service automatically when the
+settings are complete.
+
+To change settings or mode later, edit the config and restart the service:
+
+```bash
+sudo nano /etc/hawser/config
+sudo service hawser restart
+```
+
+#### Migrating from install.sh or a Manual Systemd Installation
+
+If an existing Hawser manual installation is detected, the Debian package will
+refuse to install.
+
+To migrate to the Debian package, stop your current Hawser installation and
+back it up to a temporary directory:
+
+```sh
+sudo mkdir /root/hawser-migration
+sudo systemctl disable --now hawser
+sudo mv /etc/systemd/system/hawser.service /root/hawser-migration/
+sudo mv /etc/hawser/config /root/hawser-migration/config
+sudo mv /usr/local/bin/hawser /root/hawser-migration/hawser
+sudo systemctl daemon-reload
+```
+
+If you used a custom `INSTALL_DIR`, move that binary instead.
+
+Install the package as per the instructions above. Once it's installed, move
+your stacks across to the new directory:
+
+```sh
+sudo cp -a /data/stacks/* /var/lib/hawser/stacks/
+```
+
+Copy any settings you want to retain from the backup, including `AGENT_ID`,
+`TOKEN`, and TLS settings, but keep `STACKS_DIR=/var/lib/hawser/stacks`. Ensure
+referenced certificates and keys are readable by the `hawser` user. Keep the
+old stacks until you have verified the migration; existing containers may
+still use bind mounts from that directory.
+
 ### Binary
 
 Download the latest release from [GitHub Releases](https://github.com/Finsys/hawser/releases).
@@ -70,6 +126,9 @@ TLS_SKIP_VERIFY=true DOCKHAND_SERVER_URL=wss://your-dockhand.example.com/api/haw
 ```
 
 ### Systemd Service
+
+NOTE: If you use the Debian package, you do not need to manually create a
+systemd unit.
 
 #### Quick Install
 
@@ -679,6 +738,7 @@ curl http://localhost:2376/_hawser/health
    **Recommended**: Use Dockhand's built-in token generator (when adding new Environment in Settings → Environments). It generates a cryptographically secure 32-byte base64url token and only shows it once.
 
    **Manual generation** (if not using Dockhand's UI):
+
    ```bash
    # Option 1: openssl (recommended, 32 bytes / 43 characters)
    openssl rand -base64 32
