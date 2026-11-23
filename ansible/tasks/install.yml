@@ -2,8 +2,8 @@
 - name: Detect system architecture
   ansible.builtin.set_fact:
     _hawser_arch: >-
-      {{ 'arm64' if ansible_architecture == 'aarch64'
-         else 'arm' if ansible_architecture in ['armv7l', 'armv6l']
+      {{ 'arm64' if ansible_facts["architecture"] == 'aarch64'
+         else 'arm' if ansible_facts["architecture"] in ['armv7l', 'armv6l']
          else 'amd64' }}
 
 - name: Resolve latest version from GitHub
