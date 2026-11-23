@@ -140,6 +140,12 @@ type ComposeOperation struct {
 	PullPolicy      string                `json:"pullPolicy,omitempty"`      // Pull policy: 'always' | 'missing' | 'never'
 	FilesToDelete   []FileToDelete        `json:"filesToDelete,omitempty"`   // Git deletion sync (#966): hash-verified file removals
 	RemoveFiles     bool                  `json:"removeFiles,omitempty"`     // On down: remove the stack directory entirely (#1162, stack deletion only)
+	// ClearEnvFiles names Dockhand-managed env files (.env) no longer being sent that
+	// must be removed from the host, so a variable that became a secret stops being read
+	// from a stale plaintext file. Not hash-verified (the host copy is from an earlier
+	// deploy); only the fixed managed-env allow-list is honoured, and a name also in
+	// Files is kept (it is being rewritten this deploy). An older agent ignores the field.
+	ClearEnvFiles []string `json:"clearEnvFiles,omitempty"`
 	// StreamOutput requests that Execute's onLine callback be wired up, so the
 	// caller receives one message per output line as the compose command runs
 	// instead of only the buffered result at the end. Defaults to false: a
@@ -463,6 +469,16 @@ func (c *ComposeClient) execute(ctx context.Context, op *ComposeOperation, onLin
 				skippedFiles = append(skippedFiles, SkippedFile{Path: f.Path, Reason: "apply-failed"})
 			}
 			log.Warnf("Deletion sync: no stack directory available, %d deletion(s) deferred", len(op.FilesToDelete))
+		}
+	}
+
+	// Clear Dockhand-managed env files no longer sent (a variable that became a secret, so
+	// its .env is not generated), so compose stops reading a stale value from the host.
+	// Only the fixed managed-env allow-list is touched, never a file being written this
+	// deploy. Runs before the env-file args below so a cleared file is not attached.
+	if (op.Operation == "up" || op.Operation == "build") && len(op.ClearEnvFiles) > 0 && stackDir != "" {
+		if cleared := clearManagedEnvFiles(stackDir, op.ClearEnvFiles, op.Files); len(cleared) > 0 {
+			log.Debugf("Compose: cleared %d stale managed env file(s) in %s", len(cleared), stackDir)
 		}
 	}
 

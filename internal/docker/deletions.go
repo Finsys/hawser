@@ -147,3 +147,58 @@ func applyFileDeletions(stackDir string, files []FileToDelete, allowLoadBearing 
 
 	return deleted, skipped
 }
+
+// managedEnvFiles is the fixed allow-list of env files Dockhand generates and owns on
+// the host. Only these may be cleared via ClearEnvFiles, so the channel can never remove
+// a compose file or user content even if asked to.
+var managedEnvFiles = map[string]bool{
+	".env":          true,
+	".env.dockhand": true,
+}
+
+// clearManagedEnvFiles removes Dockhand-managed env files that are no longer being sent,
+// so a variable that became a secret stops being read from a stale plaintext file on the
+// host. Deliberately narrow and NOT hash-verified (the host copy is from an earlier
+// deploy, whose hash Dockhand does not keep):
+//   - only names on the managedEnvFiles allow-list are honoured (anything else is ignored);
+//   - a name still present in keepFiles is left alone (it is being rewritten this deploy);
+//   - only a regular file is removed - a symlink or directory means the user replaced it;
+//   - the resolved path is containment-checked to stay within stackDir.
+//
+// Returns the files actually removed; absent files are a silent no-op (idempotent).
+func clearManagedEnvFiles(stackDir string, names []string, keepFiles map[string]string) []string {
+	root, err := filepath.Abs(stackDir)
+	if err != nil {
+		return nil
+	}
+	sep := string(os.PathSeparator)
+	var removed []string
+	for _, name := range names {
+		if !managedEnvFiles[name] {
+			continue // only Dockhand-managed env files, never anything else
+		}
+		if _, beingWritten := keepFiles[name]; beingWritten {
+			continue // sent this deploy - do not remove what we just wrote
+		}
+		if !isSafeRelPath(name) {
+			continue
+		}
+		abs, err := filepath.Abs(filepath.Join(root, filepath.FromSlash(name)))
+		if err != nil || (abs != root && !strings.HasPrefix(abs, root+sep)) || abs == root {
+			continue
+		}
+		stat, err := os.Lstat(abs)
+		if err != nil {
+			continue // already absent
+		}
+		if !stat.Mode().IsRegular() {
+			continue // user replaced it with a symlink/dir - leave it
+		}
+		if err := os.Remove(abs); err != nil {
+			continue
+		}
+		removed = append(removed, name)
+		log.Infof("Env sync: removed stale managed env file %q", name)
+	}
+	return removed
+}
