@@ -175,6 +175,49 @@ func (c *Client) runWithReconnect() error {
 	}
 }
 
+// newDialer builds the WebSocket dialer for an edge connection: an outbound
+// proxy from the environment and, for wss://, the TLS config (custom CA or
+// skip-verify).
+func newDialer(cfg *config.Config) (websocket.Dialer, error) {
+	dialer := websocket.Dialer{
+		HandshakeTimeout: 10 * time.Second,
+		// Honour HTTPS_PROXY/HTTP_PROXY/NO_PROXY so an edge agent behind an outbound
+		// proxy (e.g. userspace tailscaled's --outbound-http-proxy-listen) can reach
+		// Dockhand. gorilla maps the wss handshake to https before this runs, so
+		// ProxyFromEnvironment reads HTTPS_PROXY. No proxy env set -> direct dial.
+		Proxy: http.ProxyFromEnvironment,
+	}
+
+	// Configure TLS if needed (for wss:// connections)
+	if strings.HasPrefix(cfg.DockhandServerURL, "wss://") {
+		tlsConfig := &tls.Config{}
+
+		// Skip TLS verification if configured (insecure, for testing)
+		if cfg.TLSSkipVerify {
+			log.Warnf("TLS verification disabled - this is insecure!")
+			tlsConfig.InsecureSkipVerify = true
+		} else if cfg.CACert != "" {
+			// Load custom CA certificate for self-signed Dockhand servers
+			caCert, err := os.ReadFile(cfg.CACert)
+			if err != nil {
+				return dialer, fmt.Errorf("failed to read CA certificate: %w", err)
+			}
+
+			caCertPool := x509.NewCertPool()
+			if !caCertPool.AppendCertsFromPEM(caCert) {
+				return dialer, fmt.Errorf("failed to parse CA certificate")
+			}
+
+			tlsConfig.RootCAs = caCertPool
+			log.Infof("Using custom CA certificate: %s", cfg.CACert)
+		}
+
+		dialer.TLSClientConfig = tlsConfig
+	}
+
+	return dialer, nil
+}
+
 // connect establishes WebSocket connection to Dockhand
 func (c *Client) connect() error {
 	log.Infof("Connecting to %s", c.cfg.DockhandServerURL)
@@ -183,35 +226,9 @@ func (c *Client) connect() error {
 		log.Warnf("WARNING: Using unencrypted WebSocket (ws://). Token and all traffic are sent in cleartext. Use wss:// in production.")
 	}
 
-	dialer := websocket.Dialer{
-		HandshakeTimeout: 10 * time.Second,
-	}
-
-	// Configure TLS if needed (for wss:// connections)
-	if strings.HasPrefix(c.cfg.DockhandServerURL, "wss://") {
-		tlsConfig := &tls.Config{}
-
-		// Skip TLS verification if configured (insecure, for testing)
-		if c.cfg.TLSSkipVerify {
-			log.Warnf("TLS verification disabled - this is insecure!")
-			tlsConfig.InsecureSkipVerify = true
-		} else if c.cfg.CACert != "" {
-			// Load custom CA certificate for self-signed Dockhand servers
-			caCert, err := os.ReadFile(c.cfg.CACert)
-			if err != nil {
-				return fmt.Errorf("failed to read CA certificate: %w", err)
-			}
-
-			caCertPool := x509.NewCertPool()
-			if !caCertPool.AppendCertsFromPEM(caCert) {
-				return fmt.Errorf("failed to parse CA certificate")
-			}
-
-			tlsConfig.RootCAs = caCertPool
-			log.Infof("Using custom CA certificate: %s", c.cfg.CACert)
-		}
-
-		dialer.TLSClientConfig = tlsConfig
+	dialer, err := newDialer(c.cfg)
+	if err != nil {
+		return err
 	}
 
 	conn, _, err := dialer.Dial(c.cfg.DockhandServerURL, nil)

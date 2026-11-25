@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -311,5 +312,32 @@ func TestAnnotateComposeTimeout_PlainCancelIsNotDeadlineExceeded(t *testing.T) {
 
 	if result.Error != "signal: killed" {
 		t.Errorf("annotateComposeTimeout fired on plain cancellation: Error = %q, want unchanged", result.Error)
+	}
+}
+
+// TestNewDialer_SetsProxyFromEnvironment: the edge dialer must carry a Proxy so
+// an agent behind an outbound proxy (HTTPS_PROXY/HTTP_PROXY/NO_PROXY) can reach
+// Dockhand. The resolution itself is http.ProxyFromEnvironment, which snapshots
+// the proxy env on its first call per process -- so a t.Setenv-driven behaviour
+// test is flaky by test order (it reads the snapshot, not the new value) and
+// cannot be made reliable without a new dependency or a process-per-case
+// harness. This asserts only our wiring: that newDialer sets a non-nil Proxy,
+// which is what a regression deleting the field would break.
+func TestNewDialer_SetsProxyFromEnvironment(t *testing.T) {
+	dialer, err := newDialer(&config.Config{DockhandServerURL: "wss://dockhand.example.com/api/hawser/connect"})
+	if err != nil {
+		t.Fatalf("newDialer returned error: %v", err)
+	}
+	if dialer.Proxy == nil {
+		t.Fatal("dialer.Proxy is nil; edge mode cannot use an outbound proxy")
+	}
+
+	// The proxy func is reflexively identical to http.ProxyFromEnvironment:
+	// comparing the function pointers proves the wiring without depending on the
+	// cached env snapshot.
+	want := reflect.ValueOf(http.ProxyFromEnvironment).Pointer()
+	got := reflect.ValueOf(dialer.Proxy).Pointer()
+	if got != want {
+		t.Fatalf("dialer.Proxy is not http.ProxyFromEnvironment")
 	}
 }
