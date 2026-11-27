@@ -201,18 +201,26 @@ type MetricsMessage struct {
 }
 
 // HostMetrics contains CPU, memory, and disk statistics
+//
+// DiskTotal/DiskUsed/DiskFree are pointers so a failed disk stat (e.g. the
+// Docker data-root path is not visible in the agent's mount namespace) can be
+// represented as an absent field instead of a misleading 0. A plain uint64
+// zero value is indistinguishable from "0 bytes free", which previously made
+// "disk stat failed" look identical to "disk is full" on the receiving end.
+// A nil pointer marshals as an omitted field (via `omitempty`); a non-nil
+// pointer marshals as the real number, including a legitimate 0.
 type HostMetrics struct {
-	CPUUsage       float64 `json:"cpuUsage"`       // Percentage (0-100)
-	CPUCores       int     `json:"cpuCores"`       // Number of cores
-	MemoryTotal    uint64  `json:"memoryTotal"`    // Bytes
-	MemoryUsed     uint64  `json:"memoryUsed"`     // Bytes
-	MemoryFree     uint64  `json:"memoryFree"`     // Bytes
-	DiskTotal      uint64  `json:"diskTotal"`      // Bytes (Docker data-root)
-	DiskUsed       uint64  `json:"diskUsed"`       // Bytes
-	DiskFree       uint64  `json:"diskFree"`       // Bytes
-	NetworkRxBytes uint64  `json:"networkRxBytes"` // Total received bytes
-	NetworkTxBytes uint64  `json:"networkTxBytes"` // Total transmitted bytes
-	Uptime         uint64  `json:"uptime"`         // Host uptime in seconds
+	CPUUsage       float64 `json:"cpuUsage"`            // Percentage (0-100)
+	CPUCores       int     `json:"cpuCores"`            // Number of cores
+	MemoryTotal    uint64  `json:"memoryTotal"`         // Bytes
+	MemoryUsed     uint64  `json:"memoryUsed"`          // Bytes
+	MemoryFree     uint64  `json:"memoryFree"`          // Bytes
+	DiskTotal      *uint64 `json:"diskTotal,omitempty"` // Bytes (Docker data-root); nil when unavailable
+	DiskUsed       *uint64 `json:"diskUsed,omitempty"`  // Bytes; nil when unavailable
+	DiskFree       *uint64 `json:"diskFree,omitempty"`  // Bytes; nil when unavailable
+	NetworkRxBytes uint64  `json:"networkRxBytes"`      // Total received bytes
+	NetworkTxBytes uint64  `json:"networkTxBytes"`      // Total transmitted bytes
+	Uptime         uint64  `json:"uptime"`              // Host uptime in seconds
 }
 
 // NewMetricsMessage creates a new metrics message
